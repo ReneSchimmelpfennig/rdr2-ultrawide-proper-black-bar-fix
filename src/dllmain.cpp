@@ -302,12 +302,24 @@ DWORD WINAPI worker(LPVOID) {
             logger::info("image dump already present, skipping straight to the hunt");
         }
 
-        const mem::Region data = mem::section(module, ".data");
-        if (!data) {
-            logger::info("no .data section -- cannot hunt");
+        // The differential search has already run and produced the candidates
+        // in patterns::candidates. Normally we now just watch them. Drop a file
+        // named "rerun-hunt" next to the log to redo the search instead --
+        // needed after a game patch, when the raw offsets go stale.
+        std::filesystem::path marker = logger::path();
+        marker.replace_filename(L"rerun-hunt");
+
+        constexpr unsigned int kTimeoutMs = 15 * 60 * 1000;
+        if (std::filesystem::exists(marker, ec)) {
+            logger::info("'rerun-hunt' found -- running the differential search again");
+            const mem::Region data = mem::section(module, ".data");
+            if (!data) {
+                logger::info("no .data section -- cannot hunt");
+            } else {
+                hunt::run(data, weight, module.base, kTimeoutMs);
+            }
         } else {
-            constexpr unsigned int kHuntTimeoutMs = 15 * 60 * 1000;
-            hunt::run(data, weight, module.base, kHuntTimeoutMs);
+            hunt::watch(module.base, weight, kTimeoutMs);
         }
     }
 

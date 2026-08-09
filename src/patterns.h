@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 // AOB signatures, deliberately not hardcoded offsets: RDR2 still ships updates
@@ -55,6 +56,31 @@ inline constexpr std::ptrdiff_t kBarFractionDisplay = 8;
 inline constexpr std::size_t kStride = 32;
 
 }  // namespace letterbox
+
+// Candidates from the differential search, see docs/ghidra.md.
+//
+// WARNING: these are raw module offsets for RDR2.exe 1.0.1491.50, not AOB
+// patterns. They will be wrong on any other build, silently. They exist only so
+// the observation pass can watch them; nothing in the actual fix may depend on
+// them. Once the FOV is confirmed, the value gets reached through a signature
+// like everything else.
+//
+// None of them is confirmed to be a FOV. What is known: the two degree
+// candidates hold 45.000 during gameplay, change every frame during cutscenes,
+// and are copies rather than sources.
+namespace candidates {
+
+inline constexpr std::uintptr_t kDegreeCopyA = 0x39B06E4;   // written from the getter below
+inline constexpr std::uintptr_t kDegreeCopyB = 0x3AE24B8;   // broadcast as a shader constant
+inline constexpr std::uintptr_t kGetterSource = 0x3EA0BE0;  // what the getter returns
+inline constexpr std::uintptr_t kScaleX = 0x3A11250;        // 1.0 in gameplay
+inline constexpr std::uintptr_t kScaleY = 0x3A11254;        // 1.0 in gameplay
+
+// What kDegreeCopyA reads as during gameplay. Checked at startup: if it does not
+// match, the offsets are stale and the observation is meaningless.
+inline constexpr float kExpectedGameplayValue = 45.0f;
+
+}  // namespace candidates
 
 // A function prologue, also taken from RDR2NoBlackBars.asi. Purpose still
 // unconfirmed; resolves to exactly one address on this build.

@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include "log.h"
+#include "patterns.h"
 
 namespace hunt {
 namespace {
@@ -191,6 +192,96 @@ void run(const mem::Region& search_area, std::uintptr_t weight_addr, std::uintpt
     logger::info("");
     logger::info("radians stable: {} candidate(s), not listed", rad_stable.size());
     logger::info("=== FOV hunt done ===");
+}
+
+void watch(std::uintptr_t module_base, std::uintptr_t weight_addr, unsigned int duration_ms) {
+    struct Slot {
+        const char* name;
+        std::uintptr_t address;
+        float value;
+    };
+
+    Slot slots[] = {
+        {"degA", module_base + patterns::candidates::kDegreeCopyA, 0.0f},
+        {"degB", module_base + patterns::candidates::kDegreeCopyB, 0.0f},
+        {"getter", module_base + patterns::candidates::kGetterSource, 0.0f},
+        {"scaleX", module_base + patterns::candidates::kScaleX, 0.0f},
+        {"scaleY", module_base + patterns::candidates::kScaleY, 0.0f},
+    };
+
+    logger::info("");
+    logger::info("=== watching the FOV candidates ===");
+    for (const Slot& s : slots) {
+        if (!readable(s.address, sizeof(float))) {
+            logger::info("{} at module +0x{:X} is not readable -- aborting", s.name,
+                         s.address - module_base);
+            return;
+        }
+        logger::info("    {:<7} module +0x{:<9X} = {:.4f}", s.name, s.address - module_base,
+                     read_float(s.address));
+    }
+
+    // The offsets are raw, build-specific and will be silently wrong on another
+    // version of the game. Say so loudly rather than logging nonsense.
+    const float sanity = read_float(slots[0].address);
+    if (std::fabs(sanity - patterns::candidates::kExpectedGameplayValue) > 0.5f) {
+        logger::info("");
+        logger::info("WARNING: degA reads {:.4f}, expected about {:.1f}.", sanity,
+                     patterns::candidates::kExpectedGameplayValue);
+        logger::info("         Either this is not RDR2 1.0.1491.50, or you are not in gameplay.");
+        logger::info("         Watching anyway, but treat the numbers with suspicion.");
+    }
+
+    logger::info("");
+    logger::info("Open the graphics settings and move the FIELD OF VIEW slider.");
+    logger::info("If degA follows the slider, the question is answered.");
+    logger::info("");
+
+    constexpr DWORD kPollMs = 16;
+    constexpr DWORD kMinIntervalMs = 100;  // keeps a cutscene from flooding the log
+    constexpr int kMaxLines = 2000;
+    constexpr float kEpsilon = 1e-4f;
+
+    int lines = 0;
+    bool first = true;
+    DWORD last_line = 0;
+    const DWORD started = GetTickCount();
+
+    while (GetTickCount() - started < duration_ms) {
+        bool changed = first;
+        for (Slot& s : slots) {
+            if (!readable(s.address, sizeof(float))) {
+                continue;
+            }
+            const float now = read_float(s.address);
+            if (std::fabs(now - s.value) > kEpsilon) {
+                changed = true;
+            }
+            s.value = now;
+        }
+
+        const DWORD now_ms = GetTickCount();
+        if (changed && (first || now_ms - last_line >= kMinIntervalMs)) {
+            if (lines >= kMaxLines) {
+                logger::info("line budget exhausted -- stopping the watch");
+                return;
+            }
+            const float weight =
+                readable(weight_addr, sizeof(float)) ? read_float(weight_addr) : -1.0f;
+            logger::info(
+                "weight {:6.4f}   degA {:9.4f}   degB {:9.4f}   getter {:9.4f}   "
+                "scaleX {:7.4f}   scaleY {:7.4f}",
+                weight, slots[0].value, slots[1].value, slots[2].value, slots[3].value,
+                slots[4].value);
+            ++lines;
+            last_line = now_ms;
+            first = false;
+        }
+
+        Sleep(kPollMs);
+    }
+
+    logger::info("watch finished, {} line(s)", lines);
 }
 
 }  // namespace hunt

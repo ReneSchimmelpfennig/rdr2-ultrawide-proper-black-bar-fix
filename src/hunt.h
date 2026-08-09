@@ -37,4 +37,12 @@ void resample(std::vector<Candidate>& candidates);
 void run(const mem::Region& search_area, std::uintptr_t weight_addr,
          std::uintptr_t module_base, unsigned int timeout_ms);
 
+// Watches the candidates from patterns::candidates side by side with the
+// letterbox weight, logging whenever any of them moves. Purely reading.
+//
+// This is the cheap decisive test: move the FOV slider in the graphics menu. If
+// the 45.000 follows it, the value is the field of view and no writing was
+// needed to find out.
+void watch(std::uintptr_t module_base, std::uintptr_t weight_addr, unsigned int duration_ms);
+
 }  // namespace hunt
