@@ -1,0 +1,31 @@
+# Build
+build/
+out/
+bin/
+obj/
+x64/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.asi
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+CMakeSettings.json
+CMakeUserPresets.json
+
+# Dependencies (via FetchContent / manuell)
+_deps/
+external/*/
+!external/.gitkeep
+
+# RE-Artefakte (groß, ggf. urheberrechtlich)
+*.gzf
+*.rep
+*.dmp
+ghidra_projects/
+dumps/
