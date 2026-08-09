@@ -37,6 +37,11 @@ Config g_config;
 std::atomic<int> g_calls{0};
 constexpr int kLoggedCalls = 8;
 
+// Periodic sampling while a cutscene is on screen, to make compounding visible.
+std::atomic<DWORD> g_last_sample{0};
+std::atomic<int> g_samples{0};
+constexpr int kMaxSamples = 200;
+
 float read_float(std::uintptr_t addr) {
     float value = 0.0f;
     std::memcpy(&value, reinterpret_cast<const void*>(addr), sizeof(value));
@@ -113,6 +118,21 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             }
             const double factor = framing::blended_factor(k, weight);
             result = static_cast<float>(framing::corrected_vfov_deg(original, factor));
+
+            // ApplyCameraState is called for two dozen camera states, and some
+            // of them may well feed each other. If a corrected value ever ends
+            // up as somebody's source, the correction would compound frame over
+            // frame and the picture would collapse to a telephoto view. Sample
+            // the values into the log so that shows up as evidence rather than
+            // as a vague complaint about the zoom.
+            const DWORD now = GetTickCount();
+            const DWORD last = g_last_sample.load(std::memory_order_relaxed);
+            if (now - last >= 500 && g_samples.load() < kMaxSamples) {
+                g_last_sample.store(now, std::memory_order_relaxed);
+                g_samples.fetch_add(1);
+                logger::info("  cutscene: weight {:.3f}  k {:.5f}  blend {:.5f}  {:.3f} -> {:.3f}",
+                             weight, k, factor, original, result);
+            }
             break;
         }
     }

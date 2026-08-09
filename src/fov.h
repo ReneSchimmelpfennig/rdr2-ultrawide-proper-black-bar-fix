@@ -22,7 +22,7 @@ enum class Mode {
 // for a file that provably exists, while creating the log in the same directory
 // works. Until that is understood, the mode a build ships with is compiled in
 // here, so a run does not depend on a file we cannot read.
-inline constexpr Mode kCompiledDefaultMode = Mode::TestWatch;
+inline constexpr Mode kCompiledDefaultMode = Mode::Corrected;
 inline constexpr float kCompiledPokeValue = 25.0f;
 
 struct Config {
