@@ -299,12 +299,23 @@ void test_image_dump() {
 
     const auto* section = IMAGE_FIRST_SECTION(nt);
     bool offsets_match = true;
+    bool within_file = true;
     for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
         if (section[i].PointerToRawData != section[i].VirtualAddress) {
             offsets_match = false;
         }
+        const std::size_t end = static_cast<std::size_t>(section[i].PointerToRawData) +
+                                section[i].SizeOfRawData;
+        if (end > module.size) {
+            within_file = false;
+            std::printf("        section %u claims up to 0x%zX, file ends at 0x%zX\n", i, end,
+                        module.size);
+        }
     }
     check(offsets_match, "every section's file offset equals its RVA");
+    // SizeOfImage need not be section-aligned, so rounding the last section up
+    // can claim bytes that were never written. Ghidra rejects such a file.
+    check(within_file, "no section claims bytes past the end of the dump");
 
     // The decisive property: an address the plugin logs as "module +X" must be
     // at file offset X. Compare a chunk of our own code through both paths.

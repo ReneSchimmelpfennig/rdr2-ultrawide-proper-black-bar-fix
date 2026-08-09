@@ -88,7 +88,50 @@ unseren Zweck — Code lesen und Datenreferenzen verfolgen — reicht das. Wer
 benannte Imports braucht, müsste ImpRec-artig nacharbeiten.
 
 Unlesbare Seiten (die Arxan-Löcher) werden als Nullen geschrieben und im Log
-gezählt. Eine hohe Zahl dort ist das Warnsignal, dass der Dump lückenhaft ist.
+gezählt. Im ersten echten Dump waren es **0 Bytes** — das Image lag vollständig
+lesbar im Speicher.
+
+### Validierung des Dumps (2026-08-09)
+
+| Prüfung | Ergebnis |
+|---|---|
+| Größe | 121.206.272 Bytes = `SizeOfImage`, 0 unlesbar |
+| Letterbox-Anker | genau an Offset `0x320545`, wie im Log |
+| Unknown prologue | genau an Offset `0x57A458`, wie im Log |
+| Kontrollmuster `48 89 5C 24 08` | **67.455** Treffer (Datei auf Platte: 15) |
+| RIP-Auflösung nachgerechnet | `disp32 = 0x3654C68`, Ziel `0x39751B4` ✓ |
+
+Der Sprung von 15 auf 67.455 Treffer beim Kontrollmuster ist der Beweis, dass
+der Dump entschlüsselt ist.
+
+### Fallstrick: SizeOfImage ist nicht sektionsausgerichtet
+
+`SizeOfImage` von RDR2.exe ist `0x7397600` — **kein** Vielfaches von
+`SectionAlignment`. Rundet man `SizeOfRawData` der letzten Sektion stur auf,
+beansprucht sie `0xA00` Bytes hinter dem Dateiende, und Ghidra meldet eine
+abgeschnittene Sektion. `realign_headers()` klemmt deshalb gegen die tatsächliche
+Dumpgröße.
+
+Der Selbsttest prüft die Invariante, **reproduziert den Fehler aber nicht**:
+`scanner_test.exe` hat eine seitenausgerichtete `SizeOfImage`, dort fällt das
+Aufrunden mit dem Dateiende zusammen. Gefunden wurde der Fehler an der echten
+Datei, nicht im Test.
+
+### Adressen im Dump
+
+`ImageBase` im Dump ist `0x7FF6750A0000` — der Windows-Loader trägt die
+tatsächliche Ladeadresse in den gemappten Header ein, nicht die bevorzugte
+`0x140000000`. Ghidra mappt den Dump also genau dorthin, und die absoluten
+Adressen aus dem Log jenes Laufs passen direkt:
+
+| Ding | Ghidra-Adresse |
+|---|---|
+| Letterbox-Anker (der Store) | `0x7FF6753C0545` |
+| Letterbox-Struktur (Anker-Byte) | `0x7FF678A151B4` |
+| Gewicht (Anker − 8) | `0x7FF678A151AC` |
+| Unknown prologue | `0x7FF67561A458` |
+
+Bei einem neuen Dump ändert sich die Basis durch ASLR — die *Offsets* bleiben.
 
 ## Offene Frage
 

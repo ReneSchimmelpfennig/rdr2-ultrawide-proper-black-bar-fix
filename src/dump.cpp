@@ -51,8 +51,9 @@ std::size_t copy_readable(std::uintptr_t addr, std::uint8_t* dest, std::size_t l
 }
 
 // Rewrites the section table in a copy of the headers so that file offsets and
-// RVAs coincide. Returns false if the headers do not look like a PE.
-bool realign_headers(std::uint8_t* headers, std::size_t size) {
+// RVAs coincide. `image_size` is how many bytes the dump will actually contain.
+// Returns false if the headers do not look like a PE.
+bool realign_headers(std::uint8_t* headers, std::size_t size, std::size_t image_size) {
     if (size < sizeof(IMAGE_DOS_HEADER)) {
         return false;
     }
@@ -84,9 +85,21 @@ bool realign_headers(std::uint8_t* headers, std::size_t size) {
     }
 
     for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        const DWORD rva = section[i].VirtualAddress;
         const DWORD virtual_size = section[i].Misc.VirtualSize;
-        const DWORD rounded = (virtual_size + alignment - 1) / alignment * alignment;
-        section[i].PointerToRawData = section[i].VirtualAddress;
+        DWORD rounded = (virtual_size + alignment - 1) / alignment * alignment;
+
+        // SizeOfImage is not necessarily a multiple of SectionAlignment, so
+        // rounding the last section up can claim bytes past the end of the
+        // dump. A PE loader that trusts the header then reads past EOF --
+        // Ghidra reports a truncated section and may refuse the file. Clamp.
+        if (rva >= image_size) {
+            rounded = 0;
+        } else if (static_cast<std::size_t>(rva) + rounded > image_size) {
+            rounded = static_cast<DWORD>(image_size - rva);
+        }
+
+        section[i].PointerToRawData = rva;
         section[i].SizeOfRawData = rounded;
     }
     return true;
@@ -116,7 +129,7 @@ Result write_image(const mem::Region& module, const std::filesystem::path& out) 
     // First chunk carries the headers and is the only one that gets edited.
     const std::size_t first = (std::min)(kChunk, module.size);
     result.unreadable_bytes += copy_readable(module.base, buffer.data(), first);
-    if (!realign_headers(buffer.data(), first)) {
+    if (!realign_headers(buffer.data(), first, module.size)) {
         return result;  // not a PE we understand; better to write nothing
     }
     file.write(reinterpret_cast<const char*>(buffer.data()), static_cast<std::streamsize>(first));
