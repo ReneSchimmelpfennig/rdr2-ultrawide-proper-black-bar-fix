@@ -42,7 +42,12 @@ constexpr int kLoggedCalls = 8;
 std::atomic<float> g_strength{1.0f};
 std::atomic<bool> g_force{false};
 
-// Periodic sampling while a cutscene is on screen, to make compounding visible.
+// Per-call decision logging. Invaluable while the correction was being worked
+// out -- it is what finally showed the double corrections during a transition --
+// but it writes thousands of lines per cutscene, so it is off unless someone is
+// debugging.
+constexpr bool kLogEveryDecision = false;
+
 std::atomic<DWORD> g_last_sample{0};
 std::atomic<int> g_samples{0};
 constexpr int kMaxSamples = 3000;
@@ -255,7 +260,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // states per frame -- logging all of them filled the budget inside a
         // single transition last time, so the second one went unobserved.
         const bool in_transition = weight > 0.0f && weight < 0.999f;
-        if (in_transition && is_rendered && g_samples.load() < kMaxSamples) {
+        if (kLogEveryDecision && in_transition && is_rendered &&
+            g_samples.load() < kMaxSamples) {
             g_samples.fetch_add(1);
             logger::info(
                 "  {:<8} dst 0x{:012X}  w {:.4f}  in {:9.4f}  prev {:9.4f}  shader {:9.4f}"

@@ -39,7 +39,7 @@ bool host_is_rdr2() {
 }
 
 void report_environment() {
-    logger::info("RDR2 Ultrawide Cutscene Fix {} -- skeleton build", PLUGIN_VERSION);
+    logger::info("RDR2 Ultrawide Cutscene Fix {}", PLUGIN_VERSION);
     logger::info("host RDR2.exe version {}",
               mem::main_module_version().empty() ? "<unknown>" : mem::main_module_version());
 
@@ -399,39 +399,33 @@ DWORD WINAPI worker(LPVOID) {
             fov::report_destinations(module.base);
         }
 
-        // The differential search has already run and produced the candidates
-        // in patterns::candidates. Normally we now just watch them. Drop a file
-        // named "rerun-hunt" next to the log to redo the search instead --
-        // needed after a game patch, when the raw offsets go stale.
-        std::filesystem::path marker = logger::path();
-        marker.replace_filename(L"rerun-hunt");
-
-        std::filesystem::path hotkey_marker = logger::path();
-        hotkey_marker.replace_filename(L"hunt-hotkey");
+        // The reverse-engineering tools below are how the correction was found:
+        // a differential value search, a watchpoint, and a live watch of the
+        // candidates. They are not part of the fix and stay dormant unless
+        // someone drops a marker file next to the log.
+        std::filesystem::path rerun = logger::path();
+        rerun.replace_filename(L"rerun-hunt");
+        std::filesystem::path hotkey_hunt = logger::path();
+        hotkey_hunt.replace_filename(L"hunt-hotkey");
+        std::filesystem::path watch_marker = logger::path();
+        watch_marker.replace_filename(L"watch-candidates");
 
         constexpr unsigned int kTimeoutMs = 15 * 60 * 1000;
-        if (std::filesystem::exists(hotkey_marker, ec)) {
+        const mem::Region data = mem::section(module, ".data");
+
+        if (std::filesystem::exists(hotkey_hunt, ec) && data) {
             logger::info("'hunt-hotkey' found -- differential search around an external FOV change");
-            const mem::Region data = mem::section(module, ".data");
-            if (!data) {
-                logger::info("no .data section -- cannot hunt");
-            } else {
-                hunt::run_hotkey(data, module.base, 60 * 1000);
-            }
-        } else if (std::filesystem::exists(marker, ec)) {
+            hunt::run_hotkey(data, module.base, 60 * 1000);
+        } else if (std::filesystem::exists(rerun, ec) && data) {
             logger::info("'rerun-hunt' found -- running the differential search again");
-            const mem::Region data = mem::section(module, ".data");
-            if (!data) {
-                logger::info("no .data section -- cannot hunt");
-            } else {
-                hunt::run(data, weight, module.base, kTimeoutMs);
-            }
-        } else {
+            hunt::run(data, weight, module.base, kTimeoutMs);
+        } else if (std::filesystem::exists(watch_marker, ec)) {
+            logger::info("'watch-candidates' found -- watching the known addresses");
             hunt::watch(module.base, weight, kTimeoutMs);
         }
     }
 
-    logger::info("skeleton done -- no hooks installed yet");
+    logger::info("running");
     logger::close();
     return 0;
 }
