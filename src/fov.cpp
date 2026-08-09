@@ -122,41 +122,20 @@ bool carries_tag(float value) {
     return (bits & kTagMask) == kTagValue;
 }
 
-// The tag alone is not enough. Some camera states receive a corrected value
-// through the game's blend spring, which means it arrives having been through
-// arithmetic: near-identical in magnitude, but with the tag rounded away.
-// Measured during a transition, a destination took in 48.5954 one frame after
-// we had written 48.5955 elsewhere -- and got corrected a second time. Because
-// the blend ratio moves every frame, so did the double correction, which is
-// what the eye sees as jitter.
+// There used to be a second test here: treat a value as ours if it came within
+// 5e-4 relative of any of the last 512 values written. It was a patch for the
+// old design, which corrected every camera state, and it became actively
+// harmful once only the rendered camera is corrected.
 //
-// So also treat a value as ours when it sits within a hair of something we
-// recently wrote. The threshold has room on both sides: the blended copies
-// above differ from our output by about 2e-6 relative, while the nearest
-// genuinely authored value during a ramp is 2.6e-3 away.
-constexpr std::size_t kRecentSize = 512;  // ~20 frames across two dozen states
-constexpr float kRelativeEpsilon = 5e-4f;
-
-std::atomic<float> g_recent[kRecentSize]{};
-std::atomic<std::size_t> g_recent_next{0};
-
-bool near_recent_output(float value) {
-    const float tolerance = std::fabs(value) * kRelativeEpsilon;
-    for (std::size_t i = 0; i < kRecentSize; ++i) {
-        const float remembered = g_recent[i].load(std::memory_order_relaxed);
-        if (remembered != 0.0f && std::fabs(remembered - value) <= tolerance) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void remember_output(float value) {
-    const std::size_t slot = g_recent_next.fetch_add(1, std::memory_order_relaxed) % kRecentSize;
-    g_recent[slot].store(value, std::memory_order_relaxed);
-}
-
-bool is_our_own_output(float value) { return carries_tag(value) || near_recent_output(value); }
+// The reason is arithmetic. During a ramp consecutive outputs differ by about
+// 0.03, so 512 of them cover the whole range without gaps, and a tolerance of
+// 0.02 then matches *everything*. The guard had turned into a sieve: measured
+// over 3000 calls it discarded 1606 legitimate corrections and let 110 through.
+//
+// The tag stays. It is exact, cannot drift into a false positive beyond one in
+// 256, and still catches the one case that matters -- the rendered camera being
+// handed back its own previous value as a source.
+bool is_our_own_output(float value) { return carries_tag(value); }
 
 std::size_t record_destination(std::uintptr_t dst) {
     const std::size_t known = g_dst_known.load(std::memory_order_acquire);
@@ -236,8 +215,11 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         if (slot != kNoSlot) {
             g_dst_last_final[slot].store(final_value, std::memory_order_relaxed);
         }
+        // Only the rendered camera is interesting, and there are two dozen
+        // states per frame -- logging all of them filled the budget inside a
+        // single transition last time, so the second one went unobserved.
         const bool in_transition = weight > 0.0f && weight < 0.999f;
-        if (in_transition && g_samples.load() < kMaxSamples) {
+        if (in_transition && is_rendered && g_samples.load() < kMaxSamples) {
             g_samples.fetch_add(1);
             logger::info(
                 "  {:<8} dst 0x{:012X}  w {:.4f}  in {:9.4f}  prev {:9.4f}  shader {:9.4f}"
@@ -301,7 +283,6 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
 
     result = tag(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
-    remember_output(result);
     finish(result, "CORRECT");
 
     const int call = g_calls.fetch_add(1);
