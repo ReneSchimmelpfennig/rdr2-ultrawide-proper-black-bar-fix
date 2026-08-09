@@ -65,4 +65,9 @@ void run_poke(unsigned int duration_ms);
 // The resolved address of the FOV master global, or 0 before install().
 [[nodiscard]] std::uintptr_t master_address();
 
+// Logs every camera-state destination the detour has seen, with hit counts and
+// whether it is the master. Call after a run to find out which structures exist
+// -- only one of them can be the one the projection reads.
+void report_destinations(std::uintptr_t module_base);
+
 }  // namespace fov

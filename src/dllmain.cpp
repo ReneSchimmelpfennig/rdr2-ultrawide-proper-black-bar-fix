@@ -327,6 +327,7 @@ DWORD WINAPI worker(LPVOID) {
             // this value, and whether the projection is among them at all.
             watchpoint::find_writers(fov::master_address(), module.base, kWatchMs,
                                      watchpoint::Trap::ReadsAndWrites);
+            fov::report_destinations(module.base);
         }
 
         // The differential search has already run and produced the candidates

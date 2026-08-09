@@ -43,18 +43,44 @@ float read_float(std::uintptr_t addr) {
     return value;
 }
 
+// Which camera-state structures does the game apply to? Recorded from inside
+// the detour, so no allocation and no logger mutex: a small table plus counts,
+// reported afterwards.
+constexpr std::size_t kMaxDestinations = 24;
+std::atomic<std::size_t> g_dst_known{0};
+std::uintptr_t g_dst[kMaxDestinations]{};
+std::atomic<unsigned long long> g_dst_count[kMaxDestinations]{};
+
+void record_destination(std::uintptr_t dst) {
+    const std::size_t known = g_dst_known.load(std::memory_order_acquire);
+    for (std::size_t i = 0; i < known; ++i) {
+        if (g_dst[i] == dst) {
+            g_dst_count[i].fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
+    if (known < kMaxDestinations) {
+        g_dst[known] = dst;
+        g_dst_count[known].store(1, std::memory_order_relaxed);
+        g_dst_known.store(known + 1, std::memory_order_release);
+    }
+}
+
 void detour(std::uintptr_t dst, std::uintptr_t src) {
     g_original(dst, src);
 
-    // The game applies camera state to several structures; only the one whose
-    // FOV field is the master drives the projection. Comparing against the
-    // address we already resolved and validated avoids a second hardcoded
-    // offset for the structure base.
     const std::uintptr_t fov_addr =
         dst + static_cast<std::uintptr_t>(patterns::kCameraStateFov);
-    if (fov_addr != g_master_addr) {
-        return;
-    }
+
+    // Restricting the correction to the master was wrong: a read+write
+    // watchpoint showed the master is read by exactly one instruction in the
+    // whole game, the getter -- and hooking that getter changed nothing on
+    // screen. So the master feeds peripheral consumers only, and the projection
+    // takes its FOV from a different camera state.
+    //
+    // ApplyCameraState is generic, so correct every destination and record
+    // which ones exist. Whichever one moves the picture is the one we want.
+    record_destination(dst);
 
     const float original = read_float(fov_addr);
     float result = original;
@@ -95,8 +121,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
 
     const int call = g_calls.fetch_add(1);
     if (call < kLoggedCalls) {
-        logger::info("  ApplyCameraState {}: {:.4f} -> {:.4f}   (weight {:.4f})", call + 1,
-                     original, result, weight);
+        logger::info("  ApplyCameraState {}: dst 0x{:016X}  {:.4f} -> {:.4f}   (weight {:.4f})",
+                     call + 1, dst, original, result, weight);
     }
 }
 
@@ -411,6 +437,28 @@ void run_poke(unsigned int duration_ms) {
 }
 
 std::uintptr_t master_address() { return g_master_addr; }
+
+void report_destinations(std::uintptr_t module_base) {
+    const std::size_t known = g_dst_known.load();
+    logger::info("");
+    logger::info("camera-state destinations seen: {}", known);
+    for (std::size_t i = 0; i < known; ++i) {
+        const std::uintptr_t fov_addr = g_dst[i] + patterns::kCameraStateFov;
+        const bool is_master = fov_addr == g_master_addr;
+        // Globals sit inside the module; heap-allocated camera objects do not.
+        const bool in_module = g_dst[i] > module_base && g_dst[i] - module_base < 0x8000000;
+        if (in_module) {
+            logger::info("    module +0x{:<9X}  {} call(s){}", g_dst[i] - module_base,
+                         g_dst_count[i].load(), is_master ? "   <- the master" : "");
+        } else {
+            logger::info("    0x{:016X}  {} call(s)   <- not in the module (heap object)",
+                         g_dst[i], g_dst_count[i].load());
+        }
+    }
+    if (known == kMaxDestinations) {
+        logger::info("    (table full -- there may be more)");
+    }
+}
 
 void uninstall() {
     if (g_target == nullptr) {
