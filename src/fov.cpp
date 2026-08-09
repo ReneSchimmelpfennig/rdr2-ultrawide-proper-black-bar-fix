@@ -27,6 +27,7 @@ void* g_target = nullptr;
 std::uintptr_t g_weight_addr = 0;
 std::uintptr_t g_bar_addr = 0;
 std::uintptr_t g_master_addr = 0;
+std::uintptr_t g_module_base = 0;
 Config g_config;
 
 // The detour runs several times per frame from ten call sites, so it must stay
@@ -155,6 +156,7 @@ Config read_config() {
 bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& module,
              std::uintptr_t anchor, const Config& config) {
     g_config = config;
+    g_module_base = module.base;
     g_weight_addr = anchor + patterns::letterbox::kWeight;
     g_bar_addr = anchor + patterns::letterbox::kBarFractionDisplay;
 
@@ -258,50 +260,80 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
 }
 
 void run_poke(unsigned int duration_ms) {
-    if (g_master_addr == 0) {
-        logger::info("poke: master address unknown -- nothing to do");
+    if (g_master_addr == 0 || g_module_base == 0) {
+        logger::info("poke: addresses unknown -- nothing to do");
         return;
     }
 
-    // .data is writable, but say so out loud rather than assuming it.
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (VirtualQuery(reinterpret_cast<LPCVOID>(g_master_addr), &mbi, sizeof(mbi)) == 0 ||
-        (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE |
-                        PAGE_EXECUTE_WRITECOPY)) == 0) {
-        logger::info("poke: the master global is not writable (protect 0x{:X}) -- aborting",
-                     mbi.Protect);
+    // Every launch costs the player a load, so hammer all three known copies at
+    // once. If the picture stays still, all three are excluded in one run. If it
+    // moves, a second run narrows it down -- still cheaper than three runs.
+    struct Slot {
+        const char* name;
+        std::uintptr_t address;
+        bool writable;
+    };
+    Slot slots[] = {
+        {"master", g_master_addr, false},
+        {"degA", g_module_base + patterns::candidates::kDegreeCopyA, false},
+        {"degB", g_module_base + patterns::candidates::kDegreeCopyB, false},
+    };
+
+    int usable = 0;
+    for (Slot& s : slots) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        const bool ok =
+            VirtualQuery(reinterpret_cast<LPCVOID>(s.address), &mbi, sizeof(mbi)) != 0 &&
+            (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE |
+                            PAGE_EXECUTE_WRITECOPY)) != 0;
+        s.writable = ok;
+        if (ok) {
+            ++usable;
+        } else {
+            logger::info("poke: {} at module +0x{:X} is not writable (protect 0x{:X})", s.name,
+                         s.address - g_module_base, mbi.Protect);
+        }
+    }
+    if (usable == 0) {
+        logger::info("poke: nothing writable -- aborting");
         return;
     }
 
     logger::info("");
-    logger::info("=== POKE: writing {:.3f} over the master FOV for {} s ===", g_config.poke_value,
-                 duration_ms / 1000);
+    logger::info("=== POKE: writing {:.3f} over {} address(es) for {} s ===", g_config.poke_value,
+                 usable, duration_ms / 1000);
     logger::info("Watch the picture. Expect flicker rather than a clean change --");
     logger::info("we are racing the game's own per-frame write, and that is fine:");
-    logger::info("flicker answers 'does this address reach the projection at all'.");
+    logger::info("flicker answers 'do any of these reach the projection at all'.");
 
     const DWORD started = GetTickCount();
     DWORD last_report = started;
     unsigned long long writes = 0;
-    float last_seen = 0.0f;
+    float seen[3]{};
 
     while (GetTickCount() - started < duration_ms) {
-        last_seen = read_float(g_master_addr);
-        std::memcpy(reinterpret_cast<void*>(g_master_addr), &g_config.poke_value, sizeof(float));
+        for (int i = 0; i < 3; ++i) {
+            if (!slots[i].writable) {
+                continue;
+            }
+            seen[i] = read_float(slots[i].address);
+            std::memcpy(reinterpret_cast<void*>(slots[i].address), &g_config.poke_value,
+                        sizeof(float));
+        }
         ++writes;
 
         const DWORD now = GetTickCount();
         if (now - last_report >= 5000) {
-            // If the game keeps winning the race, what we read back is its
-            // value, not ours -- that tells us how contested the address is.
-            logger::info("  {} writes, last value read back before writing: {:.4f}", writes,
-                         last_seen);
+            // What we read back before writing is whatever won the last race.
+            // Values close to ours mean the game is not rewriting that slot.
+            logger::info("  {} rounds; read back before writing: master {:.4f}, degA {:.4f}, degB {:.4f}",
+                         writes, seen[0], seen[1], seen[2]);
             last_report = now;
         }
         Sleep(1);
     }
 
-    logger::info("=== POKE done, {} writes ===", writes);
+    logger::info("=== POKE done, {} rounds ===", writes);
 }
 
 void uninstall() {
