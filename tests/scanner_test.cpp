@@ -206,6 +206,18 @@ void test_framing() {
     check(std::fabs(corrected - 60.0 * k) > 1.0, "tangent space differs from naive angle scaling");
     check_near(framing::corrected_vfov_deg(60.0, 1.0), 60.0, 1e-9, "k = 1 is the identity");
 
+    // Deriving k from the game's own bar fraction. The constants are the values
+    // measured in the running game, see docs/messungen.md.
+    constexpr double kBarPerWeight = 0.127907;  // = (1 - k)/2 at 3440x1440
+    check_near(framing::correction_factor_from_bars(kBarPerWeight * 1.0, 1.0), k, 1e-5,
+               "k recovered from the fully letterboxed frame");
+    check_near(framing::correction_factor_from_bars(kBarPerWeight * 0.25, 0.25), k, 1e-5,
+               "k recovered mid-ramp, weight cancels out");
+    check_near(framing::correction_factor_from_bars(0.0, 0.0), 1.0, 1e-12,
+               "no letterbox on screen -> no answer, returns identity");
+    check_near(framing::correction_factor_from_bars(0.0001, 0.0001), 1.0, 1e-12,
+               "a weight too small to divide by is rejected rather than amplified");
+
     // Blending: gameplay untouched, full letterbox fully corrected.
     check_near(framing::blended_factor(k, 0.0), 1.0, 1e-12, "no letterbox -> no correction");
     check_near(framing::blended_factor(k, 1.0), k, 1e-12, "full letterbox -> full correction");

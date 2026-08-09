@@ -34,22 +34,69 @@ Spielpatch ab.
 **Das Flag liegt in `.data`,** `0x5E1B4` hinter dem Sektionsanfang (`.data` ab
 RVA `0x3917000`). Ein globales Byte — passt zum Profil eines Enable-Flags.
 
-## Offen: Trigger ja, Interpolation fraglich
+## Lauf 2 — 2026-08-09, zweimal Cutscene rein und raus
 
-Die Signatur ist `mov byte ptr [rip+disp32], 0FFh`. Geschrieben wird ein
-**Byte**, und zwar `0xFF`. Als Trigger reicht das, aber die Designnotiz in
-CLAUDE.md setzt voraus, dass derselbe Wert auch die weiche Überblendung von `k`
-trägt. Ein Byte, das nur 0 und 0xFF kennt, kann das nicht.
+293 protokollierte Frames. Ergebnis: **das Byte, auf das unsere Signatur zeigt,
+ist konstant `0xFF`** — in Gameplay wie in Cutscene, über alle 293 Frames. Als
+Trigger ist es wertlos. Wertvoll ist seine *Adresse*: es sitzt bei `+0x08` einer
+32 Byte großen Struktur, in der der komplette Letterbox-Zustand liegt.
 
-Drei Möglichkeiten:
+### Struktur, relativ zum Anker-Byte
 
-1. Ein benachbarter Wert (Float?) rampt während des Übergangs — dann taucht er
-   im beobachteten Fenster auf.
-2. Der Rampenwert liegt woanders und muss eigenständig gesucht werden.
-3. Es gibt gar keinen — dann muss das Plugin selbst weich überblenden,
-   getriggert durch die Flanke des Flags.
+| Offset | Typ | Inhalt |
+|---|---|---|
+| `-0x08` | float | **Gewicht**, 0.0 in Gameplay → 1.0 voll letterboxed |
+| `-0x04` | float | Duplikat des Gewichts, in allen 293 Frames byte-identisch |
+| `+0x00` | byte | konstant `0xFF` — das Anker-Byte |
+| `+0x04` | float | Gewicht × **0.121749** |
+| `+0x08` | float | Gewicht × **0.127907** |
+| `+0x20` | — | die ganze Struktur wiederholt sich, ein Frame Versatz (Doppelpufferung) |
 
-`monitor_letterbox_flag()` in `src/dllmain.cpp` beantwortet das rein lesend: es
-pollt `[flag-0x10 .. flag+0x30)` einmal pro Frame und protokolliert jede
-Änderung als Hexdump. Fall 1 ist dann direkt sichtbar, Fall 2 und 3 zeigen sich
-als „nur das Flag kippt, sonst nichts".
+### Die beiden Konstanten
+
+Die Verhältnisse `+0x04 / Gewicht` und `+0x08 / Gewicht` sind über alle Frames
+**exakt konstant** (Minimum = Maximum auf sechs Nachkommastellen):
+
+```
+0.121749 = (1 - (16/9) / 2.35   ) / 2      Balkenhöhe für 2.35:1
+0.127907 = (1 - (16/9) / 2.3889 ) / 2      Balkenhöhe für 3440x1440
+```
+
+Rückgerechnet ergibt die erste Konstante einen Zielaspect von 2.3500, die zweite
+2.3889 — Letzteres ist auf vier Stellen unser Displayaspect. Anders gesagt:
+
+```
+0.127907 = (1 - k) / 2     mit k = 0.744186
+```
+
+**Das Spiel berechnet unser `k` bereits selbst, pro Frame, aus der echten
+Auflösung.** `framing::correction_factor_from_bars()` dreht das um und gewinnt
+`k` daraus zurück. Das ist der Auflösung aus `GetSystemMetrics` überlegen, weil
+es im Fenstermodus, bei nicht-nativer Auflösung und bei Renderskalierung ohne
+Zutun stimmt.
+
+### Zeitverlauf
+
+Beide Cutscenes verhalten sich identisch:
+
+| Phase | Dauer | Frames |
+|---|---|---|
+| Einblenden | ~1,29 s | 71 bzw. 70 |
+| Halten bei 1.0 | variabel | — |
+| Ausblenden | ~1,00 s | 55 bzw. 55 |
+
+Die Rampe ist **kein** linearer Verlauf: das Delta pro Frame fällt von 0,0222 auf
+0,0217 — ein leichtes Ease-out. Genau deshalb wird der Wert gelesen und nicht
+nachgebaut; eine selbstgebaute Kurve würde gegen die Balkenanimation laufen.
+
+## Erledigt: Trigger und Interpolation kommen aus derselben Quelle
+
+Die ursprüngliche Sorge war, dass `mov byte ptr [rip+disp32], 0FFh` nur ein
+Boolean schreibt und damit die weiche Überblendung von `k` nicht tragen kann,
+die CLAUDE.md voraussetzt. Das hat sich anders aufgelöst als erwartet: das Byte
+ist tatsächlich nutzlos (immer `0xFF`), aber acht Bytes davor liegt genau der
+0..1-Float, den das Design braucht.
+
+**Trigger und Interpolationsgewicht sind derselbe Wert** — `Gewicht > 0` heißt
+Cutscene, und der Betrag ist gleichzeitig das Blendgewicht. Die Designnotiz war
+richtig, nur die vermutete Quelle war es nicht.

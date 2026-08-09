@@ -81,7 +81,7 @@ std::uintptr_t scan_patterns(const mem::Region& module,
         return hits;
     };
 
-    const auto letterbox = scan_one("letterbox flag store", patterns::kLetterboxFlagStore);
+    const auto letterbox = scan_one("letterbox struct anchor", patterns::kLetterboxStructAnchor);
     scan_one("unknown prologue", patterns::kUnknownPrologue);
 
     if (letterbox.size() != 1) {
@@ -91,9 +91,8 @@ std::uintptr_t scan_patterns(const mem::Region& module,
         return 0;
     }
 
-    const std::uintptr_t flag =
-        mem::resolve_rip_relative(letterbox.front(), patterns::kLetterboxFlagStoreDispOffset,
-                                  patterns::kLetterboxFlagStoreLength);
+    const std::uintptr_t flag = mem::resolve_rip_relative(
+        letterbox.front(), patterns::kAnchorDispOffset, patterns::kAnchorLength);
     logger::info("    -> RIP target 0x{:016X} (module +0x{:X}){}", flag, flag - module.base,
                  module.contains(flag) ? "" : "  [OUTSIDE THE MODULE -- suspicious]");
     return module.contains(flag) ? flag : 0;
@@ -143,72 +142,61 @@ bool is_readable(std::uintptr_t addr, std::size_t size) {
     return addr + size <= block_end;
 }
 
-// Watches the letterbox flag and the memory immediately around it, purely by
-// reading -- nothing is hooked or written.
-//
-// The open question this answers: the signature stores 0FFh into a *byte*, so
-// on its own the flag is a boolean and cannot carry the smooth 0..1 weight the
-// design wants for blending k. Either a neighbouring value ramps during the
-// transition, in which case it shows up in this window, or no such value exists
-// here and the plugin has to do its own easing. Dumping the neighbourhood on
-// every change settles which.
-void monitor_letterbox_flag(std::uintptr_t flag) {
-    constexpr std::size_t kBefore = 16;
-    constexpr std::size_t kAfter = 48;
-    constexpr std::size_t kWindow = kBefore + kAfter;
-    constexpr DWORD kPollMs = 16;                     // ~ once per frame at 60 Hz
-    constexpr DWORD kDurationMs = 15 * 60 * 1000;     // stop after 15 minutes
-    constexpr int kMaxLines = 1500;                   // keep the log finite
+float read_float(std::uintptr_t addr) {
+    float value = 0.0f;
+    std::memcpy(&value, reinterpret_cast<const void*>(addr), sizeof(value));
+    return value;
+}
 
-    const std::uintptr_t window_base = flag - kBefore;
-    if (!is_readable(window_base, kWindow)) {
-        logger::info("flag neighbourhood is not readable -- monitoring only the byte itself");
-        if (!is_readable(flag, 1)) {
-            logger::info("flag byte itself is not readable either -- giving up on monitoring");
-            return;
-        }
+// Watches the decoded letterbox state, purely by reading -- nothing is hooked
+// or written. The layout it assumes is in patterns::letterbox and was measured,
+// not guessed; logging it in decoded form means a game patch that moves a field
+// shows up as nonsense here instead of silently feeding a wrong FOV.
+void monitor_letterbox_state(std::uintptr_t anchor) {
+    constexpr DWORD kPollMs = 16;                  // ~ once per frame
+    constexpr DWORD kDurationMs = 15 * 60 * 1000;  // stop after 15 minutes
+    constexpr int kMaxLines = 1500;                // keep the log finite
+    constexpr float kEpsilon = 1e-4f;
+
+    const std::uintptr_t weight_addr = anchor + patterns::letterbox::kWeight;
+    const std::uintptr_t bar235_addr = anchor + patterns::letterbox::kBarFraction235;
+    const std::uintptr_t bar_display_addr = anchor + patterns::letterbox::kBarFractionDisplay;
+
+    if (!is_readable(weight_addr, patterns::letterbox::kStride)) {
+        logger::info("letterbox struct is not readable -- giving up on monitoring");
+        return;
     }
 
     logger::info("");
-    logger::info("watching the letterbox flag for {} minutes, logging every change.",
+    logger::info("watching the letterbox struct for {} minutes, logging every change.",
                  kDurationMs / 60000);
-    logger::info("window is [flag-0x{:X} .. flag+0x{:X}), flag byte marked with []", kBefore,
-                 kAfter);
     logger::info("go into a cutscene and back out.");
 
-    std::vector<std::uint8_t> previous(kWindow, 0);
-    std::vector<std::uint8_t> current(kWindow, 0);
-    bool have_previous = false;
+    float previous = -1.0f;
     int lines = 0;
 
     const DWORD started = GetTickCount();
     while (GetTickCount() - started < kDurationMs) {
-        if (!is_readable(window_base, kWindow)) {
+        if (!is_readable(weight_addr, patterns::letterbox::kStride)) {
             Sleep(kPollMs);
             continue;
         }
-        std::memcpy(current.data(), reinterpret_cast<const void*>(window_base), kWindow);
 
-        if (!have_previous || current != previous) {
+        const float weight = read_float(weight_addr);
+        if (std::fabs(weight - previous) > kEpsilon) {
             if (lines >= kMaxLines) {
                 logger::info("line budget exhausted -- stopping the watch");
                 return;
             }
 
-            std::string dump;
-            dump.reserve(kWindow * 3 + 8);
-            for (std::size_t i = 0; i < kWindow; ++i) {
-                if (i == kBefore) {
-                    dump += std::format("[{:02X}] ", current[i]);
-                } else {
-                    dump += std::format("{:02X} ", current[i]);
-                }
-            }
-            logger::info("flag={:02X}  {}", current[kBefore], dump);
-            ++lines;
+            const float bar235 = read_float(bar235_addr);
+            const float bar_display = read_float(bar_display_addr);
+            const double k_from_game = framing::correction_factor_from_bars(bar_display, weight);
 
-            previous = current;
-            have_previous = true;
+            logger::info("weight {:.4f}   bar(2.35) {:.5f}   bar(display) {:.5f}   k {:.5f}",
+                         weight, bar235, bar_display, k_from_game);
+            ++lines;
+            previous = weight;
         }
 
         Sleep(kPollMs);
@@ -247,8 +235,8 @@ DWORD WINAPI worker(LPVOID) {
     logger::info("RDR2.exe base 0x{:016X}, image size {} bytes ({:.1f} MB)", module.base,
                  module.size, static_cast<double>(module.size) / (1024.0 * 1024.0));
 
-    if (const std::uintptr_t flag = scan_until_found(module); flag != 0) {
-        monitor_letterbox_flag(flag);
+    if (const std::uintptr_t anchor = scan_until_found(module); anchor != 0) {
+        monitor_letterbox_state(anchor);
     }
 
     logger::info("skeleton done -- no hooks installed yet");

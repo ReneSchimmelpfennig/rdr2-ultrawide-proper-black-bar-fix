@@ -33,6 +33,23 @@ inline constexpr double kMaxCorrectedAspect = 2.4;
     return kReferenceAspect / std::min(aspect, kMaxCorrectedAspect);
 }
 
+// The game computes the same quantity we do. Its letterbox struct carries a
+// float equal to weight * (1 - k)/2 -- the bar height for the real display
+// aspect. Inverting that yields k straight from the game's own view of the
+// backbuffer, which beats GetSystemMetrics: it is already correct in windowed
+// mode, at non-native resolutions and with render scaling.
+//
+// Only meaningful while a letterbox is on screen; returns 1.0 when the weight
+// is too small to divide by. Measured agreement with correction_factor() on
+// 3440x1440 was exact to six decimals.
+[[nodiscard]] inline double correction_factor_from_bars(double bar_fraction_display,
+                                                        double weight) {
+    if (weight < 1e-3) {
+        return 1.0;
+    }
+    return 1.0 - 2.0 * (bar_fraction_display / weight);
+}
+
 // vFOV_new = 2 * atan(k * tan(vFOV_old / 2))
 [[nodiscard]] inline double corrected_vfov_rad(double vfov_rad, double k) {
     return 2.0 * std::atan(k * std::tan(vfov_rad * 0.5));
