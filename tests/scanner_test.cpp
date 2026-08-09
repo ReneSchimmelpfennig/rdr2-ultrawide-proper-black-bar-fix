@@ -6,6 +6,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -18,6 +19,7 @@
 
 #include "../src/dump.h"
 #include "../src/framing.h"
+#include "../src/hunt.h"
 #include "../src/log.h"
 #include "../src/mem.h"
 
@@ -260,6 +262,79 @@ void test_logger_fallback() {
     }
 }
 
+void test_hunt() {
+    std::puts("value hunt");
+
+    // A scratch page playing the part of .data.
+    constexpr std::size_t kFloats = 64;
+    auto* page = static_cast<float*>(
+        VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    check(page != nullptr, "allocated a scratch page");
+    if (page == nullptr) {
+        return;
+    }
+    for (std::size_t i = 0; i < kFloats; ++i) {
+        page[i] = 1000.0f;  // out of every window we search
+    }
+
+    const mem::Region region{reinterpret_cast<std::uintptr_t>(page), kFloats * sizeof(float)};
+
+    // Three plants inside the degree window, one just outside it.
+    page[4] = 50.0f;   // will change and keep changing  -> per-frame
+    page[9] = 55.0f;   // will change once, then hold    -> stable
+    page[14] = 60.0f;  // will not change at all         -> dropped
+    page[20] = 95.0f;  // outside [10..90]               -> never collected
+
+    auto candidates = hunt::collect(region, 10.0f, 90.0f);
+    check(candidates.size() == 3, "collects exactly the in-range floats");
+    check(std::none_of(candidates.begin(), candidates.end(),
+                       [&](const hunt::Candidate& c) {
+                           return c.address == reinterpret_cast<std::uintptr_t>(&page[20]);
+                       }),
+          "a value outside the window is not collected");
+    check(std::all_of(candidates.begin(), candidates.end(),
+                      [](const hunt::Candidate& c) { return c.address % 4 == 0; }),
+          "every candidate is 4-byte aligned");
+
+    // "Cutscene": two of them move.
+    page[4] = 35.0f;
+    page[9] = 42.0f;
+    hunt::keep_changed(candidates, 10.0f, 90.0f, 0.01f);
+    check(candidates.size() == 2, "unchanged values are dropped");
+
+    // A frame later only one keeps moving.
+    page[4] = 35.5f;
+    hunt::resample(candidates);
+
+    int per_frame = 0;
+    int stable = 0;
+    for (const auto& c : candidates) {
+        if (std::fabs(c.later - c.cutscene) > 1e-6f) {
+            ++per_frame;
+        } else {
+            ++stable;
+        }
+    }
+    check(per_frame == 1, "one candidate is rewritten every frame");
+    check(stable == 1, "one candidate is stable during the cutscene");
+
+    // A value that leaves the window between passes must be dropped by the
+    // range check. It changed by a lot, so min_change alone would keep it --
+    // this pins down which rule does the work.
+    auto leaving = hunt::collect(region, 10.0f, 90.0f);
+    const auto addr9 = reinterpret_cast<std::uintptr_t>(&page[9]);
+    check(std::any_of(leaving.begin(), leaving.end(),
+                      [&](const hunt::Candidate& c) { return c.address == addr9; }),
+          "the value is a candidate before it leaves the window");
+    page[9] = 500.0f;
+    hunt::keep_changed(leaving, 10.0f, 90.0f, 0.01f);
+    check(std::none_of(leaving.begin(), leaving.end(),
+                       [&](const hunt::Candidate& c) { return c.address == addr9; }),
+          "a value that left the window is dropped, not kept as a wild reading");
+
+    VirtualFree(page, 0, MEM_RELEASE);
+}
+
 void test_image_dump() {
     std::puts("image dump");
 
@@ -338,6 +413,7 @@ int main() {
     test_module_introspection();
     test_framing();
     test_logger_fallback();
+    test_hunt();
     test_image_dump();
 
     std::printf("\n%s\n", g_failures == 0 ? "all checks passed" : "THERE WERE FAILURES");

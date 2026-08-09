@@ -36,6 +36,11 @@ struct NamedRegion {
 // Every section with IMAGE_SCN_MEM_EXECUTE, in header order.
 std::vector<NamedRegion> executable_sections(const Region& module);
 
+// Splits a region into the parts that may actually be read, merging adjacent
+// readable blocks. A packed image has PAGE_NOACCESS and guard pages inside its
+// sections; walking them blindly access-violates.
+std::vector<Region> readable_subranges(const Region& region);
+
 // File version of the main module, as "1.0.1491.50". Empty if unavailable.
 std::string main_module_version();
 

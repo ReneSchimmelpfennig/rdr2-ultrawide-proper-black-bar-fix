@@ -164,8 +164,6 @@ std::optional<Pattern> parse_pattern(std::string_view signature) {
     return pattern;
 }
 
-namespace {
-
 // A packed binary is full of holes: Arxan leaves PAGE_NOACCESS and guard pages
 // inside the executable sections, and blindly walking them access-violates.
 // Split the region into the parts we may actually read, merging neighbours so a
@@ -200,6 +198,8 @@ std::vector<Region> readable_subranges(const Region& region) {
     }
     return out;
 }
+
+namespace {
 
 void scan_range(const Region& region, const Pattern& pattern, std::vector<std::uintptr_t>& hits) {
     if (!region || region.size < pattern.bytes.size()) {

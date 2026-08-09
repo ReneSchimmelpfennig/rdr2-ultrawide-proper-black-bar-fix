@@ -53,6 +53,8 @@ add_library(${PROJECT_NAME} SHARED
     src/dllmain.cpp
     src/dump.cpp
     src/dump.h
+    src/hunt.cpp
+    src/hunt.h
     src/log.cpp
     src/log.h
     src/mem.cpp
@@ -80,7 +82,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE minhook version.lib)
 # ---------------------------------------------------------------------------
 enable_testing()
 
-add_executable(scanner_test tests/scanner_test.cpp src/mem.cpp src/log.cpp src/dump.cpp)
+add_executable(scanner_test
+    tests/scanner_test.cpp src/mem.cpp src/log.cpp src/dump.cpp src/hunt.cpp)
 target_compile_definitions(scanner_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(scanner_test PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(scanner_test PRIVATE version.lib)

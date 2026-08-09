@@ -11,6 +11,7 @@
 
 #include "dump.h"
 #include "framing.h"
+#include "hunt.h"
 #include "log.h"
 #include "mem.h"
 #include "patterns.h"
@@ -286,9 +287,28 @@ DWORD WINAPI worker(LPVOID) {
                  module.size, static_cast<double>(module.size) / (1024.0 * 1024.0));
 
     if (const std::uintptr_t anchor = scan_until_found(module); anchor != 0) {
-        constexpr DWORD kWatchMs = 10 * 60 * 1000;
-        const bool saw_cutscene = monitor_letterbox_state(anchor, kWatchMs);
-        dump_image_once(module, saw_cutscene);
+        const std::uintptr_t weight = anchor + patterns::letterbox::kWeight;
+
+        // The dump is written once; on later launches this returns immediately
+        // and we go straight to hunting.
+        std::filesystem::path existing = logger::path();
+        existing.replace_filename(L"RDR2.dump.exe");
+        std::error_code ec;
+        if (!std::filesystem::exists(existing, ec)) {
+            constexpr DWORD kWatchMs = 10 * 60 * 1000;
+            const bool saw_cutscene = monitor_letterbox_state(anchor, kWatchMs);
+            dump_image_once(module, saw_cutscene);
+        } else {
+            logger::info("image dump already present, skipping straight to the hunt");
+        }
+
+        const mem::Region data = mem::section(module, ".data");
+        if (!data) {
+            logger::info("no .data section -- cannot hunt");
+        } else {
+            constexpr unsigned int kHuntTimeoutMs = 15 * 60 * 1000;
+            hunt::run(data, weight, module.base, kHuntTimeoutMs);
+        }
     }
 
     logger::info("skeleton done -- no hooks installed yet");
