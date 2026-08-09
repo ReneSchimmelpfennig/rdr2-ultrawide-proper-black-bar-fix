@@ -230,6 +230,33 @@ Basis `0x7ff678f60b00` (Moduloffset `+0x3EC0B00`), Schrittweite **`0x690`**, Ind
 kommt aus dem TLS-Block. Also ein Array von View-Konstantenpuffern, vermutlich
 eines pro Auge/Kaskade/Frame-in-flight.
 
+## Ergebnis des Getter-Hooks (2026-08-09): wirkungslos aufs Bild
+
+Der Hook auf `GetFov()` (`+0x173ED4`) läuft nachweislich — das Log zeigt
+`50.0000 -> 25.0000` — und das Bild bleibt unverändert. Die Beobachtung daneben
+erklärt warum:
+
+| Wert | Verhalten mit aktivem Hook |
+|---|---|
+| `degA` (`+0x39B06E4`) | **halbiert**, in 279 von 284 Zeilen exakt `getter/2` |
+| `degB` (`+0x3AE24B8`) | unverändert beim vollen Wert |
+| Master (`+0x3EA0BE0`) | unverändert |
+
+Der Getter speist also nur `degA`, die Kopie für die Änderungserkennung. Die
+View-Struktur und damit die Shader-Konstante hängen an einem anderen Zweig.
+
+**Zwei Erkenntnisse daraus:**
+
+1. Der Getter ist als Eingriffspunkt erledigt. Seine zehn Aufrufer sind
+   Peripherie (LOD, Schärfentiefe), nicht die Projektion.
+2. **Arxan stört sich nicht an einem MinHook-Trampolin** in `.text` — kein
+   Absturz, kein Zurückschreiben, das Plugin lief danach normal weiter. Damit
+   ist die seit [packing.md](packing.md) offene Frage beantwortet: Detours sind
+   in diesem Codebereich gangbar, es muss kein Byte-Patching sein.
+
+Der gesuchte Eingriff liegt **oberhalb** des Masters: bei dem Code, der ihn
+schreibt, bevor Projektionsmatrix und View-Struktur daraus gebaut werden.
+
 ## Nächster Schritt: die Schreibstelle
 
 Der **Wert** ist gefunden, die **Schreibstelle** noch nicht. Ghidra sieht auf
