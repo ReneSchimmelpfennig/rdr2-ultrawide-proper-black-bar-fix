@@ -89,6 +89,15 @@ float detour() {
 Config read_config() {
     Config config;
 
+    const char* compiled = "?";
+    switch (kCompiledDefaultMode) {
+        case Mode::Off: compiled = "OFF"; break;
+        case Mode::Test: compiled = "TEST"; break;
+        case Mode::Corrected: compiled = "CORRECTED"; break;
+        case Mode::Poke: compiled = "POKE"; break;
+    }
+    logger::info("compiled-in default mode: {}", compiled);
+
     std::filesystem::path path = logger::path();
     if (path.empty()) {
         return config;
@@ -104,11 +113,34 @@ Config read_config() {
                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
-        logger::info("fov.txt not readable (error {}) -- defaulting to TEST mode, factor {:.3f}",
-                     error, config.test_factor);
+        logger::info("fov.txt not readable (error {}) -- using the compiled-in mode", error);
         logger::info("  tried: {}", path.string());
-        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
-            logger::info("  write 'real', 'poke 25' or 'test 0.75' into that file to change mode");
+
+        // Error 2 on a file that demonstrably exists, in a directory this same
+        // process just created the log in. Enumerate the directory to see what
+        // the game process actually thinks is there -- that distinguishes "the
+        // file is filtered" from "this is a different directory entirely".
+        std::filesystem::path pattern = path;
+        pattern.replace_filename(L"*");
+
+        WIN32_FIND_DATAW found{};
+        const HANDLE search = FindFirstFileW(pattern.c_str(), &found);
+        if (search == INVALID_HANDLE_VALUE) {
+            logger::info("  directory enumeration failed too (error {})", GetLastError());
+        } else {
+            logger::info("  what this process sees in that directory:");
+            int entries = 0;
+            do {
+                const std::wstring name = found.cFileName;
+                if (name != L"." && name != L"..") {
+                    logger::info("    {}", std::filesystem::path(name).string());
+                    ++entries;
+                }
+            } while (FindNextFileW(search, &found) && entries < 20);
+            FindClose(search);
+            if (entries == 0) {
+                logger::info("    (nothing)");
+            }
         }
         return config;
     }

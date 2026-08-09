@@ -16,10 +16,17 @@ enum class Mode {
     Poke        // no hook: overwrite the master global directly, see run_poke()
 };
 
+// Reading fov.txt from inside the game process fails with ERROR_FILE_NOT_FOUND
+// for a file that provably exists, while creating the log in the same directory
+// works. Until that is understood, the mode a build ships with is compiled in
+// here, so a run does not depend on a file we cannot read.
+inline constexpr Mode kCompiledDefaultMode = Mode::Poke;
+inline constexpr float kCompiledPokeValue = 25.0f;
+
 struct Config {
-    Mode mode = Mode::Test;
-    float test_factor = 0.5f;  // only used in Test mode
-    float poke_value = 25.0f;  // only used in Poke mode
+    Mode mode = kCompiledDefaultMode;
+    float test_factor = 0.5f;
+    float poke_value = kCompiledPokeValue;
 };
 
 // Reads "fov.txt" next to the log. Missing file means Test mode -- the first
