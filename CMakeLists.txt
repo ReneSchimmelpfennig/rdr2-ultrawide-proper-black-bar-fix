@@ -53,6 +53,8 @@ add_library(${PROJECT_NAME} SHARED
     src/dllmain.cpp
     src/dump.cpp
     src/dump.h
+    src/fov.cpp
+    src/fov.h
     src/hunt.cpp
     src/hunt.h
     src/log.cpp

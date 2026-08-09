@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "dump.h"
+#include "fov.h"
 #include "framing.h"
 #include "hunt.h"
 #include "log.h"
@@ -302,6 +303,11 @@ DWORD WINAPI worker(LPVOID) {
             logger::info("image dump already present, skipping straight to the hunt");
         }
 
+        // The actual fix. Installed before the watch so the watch shows the
+        // hooked values -- degA is written from the getter's return value, so
+        // it doubles as an in-log confirmation that the detour is live.
+        fov::install(mem::executable_sections(module), module, anchor, fov::read_config());
+
         // The differential search has already run and produced the candidates
         // in patterns::candidates. Normally we now just watch them. Drop a file
         // named "rerun-hunt" next to the log to redo the search instead --
@@ -344,6 +350,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
             CloseHandle(thread);
         }
     } else if (reason == DLL_PROCESS_DETACH) {
+        fov::uninstall();
         MH_Uninitialize();
         logger::close();
     }

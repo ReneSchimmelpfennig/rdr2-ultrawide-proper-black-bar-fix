@@ -57,6 +57,33 @@ inline constexpr std::size_t kStride = 32;
 
 }  // namespace letterbox
 
+// float GetFov()  ->  movss xmm0, [rip+disp32] ; ret
+//
+// The camera's vertical field of view in degrees, proven by the binocular test
+// (51.282 in gameplay, 8.578 fully zoomed) and confirmed a second time by the
+// engine computing 24.0 / (2*tan(fov/2)) from it -- photographic focal length
+// with the 24 mm height of a 35 mm frame.
+//
+// CAVEAT: the getter on its own is nine bytes of the most generic float getter
+// imaginable and matches 50+ times. Uniqueness only comes from the sixteen
+// bytes in front of it, which are the *tail of a different function*. That is
+// more fragile across game patches than a signature contained in one function.
+// The plugin therefore verifies the match instead of trusting it: the
+// RIP-relative target must land inside .data, and the value there must look
+// like a field of view.
+inline constexpr std::string_view kFovGetter =
+    "C0 74 05 48 8B C3 EB 02 33 C0 48 83 C4 20 5B C3 F3 0F 10 05 ? ? ? ? C3 CC";
+
+// Where the getter itself starts inside the match above.
+inline constexpr std::size_t kFovGetterOffset = 16;
+// The movss is 8 bytes with its disp32 at +4.
+inline constexpr std::size_t kFovMovssDispOffset = 4;
+inline constexpr std::size_t kFovMovssLength = 8;
+
+// A field of view outside this range means we hooked the wrong thing.
+inline constexpr float kFovSanityMin = 1.0f;
+inline constexpr float kFovSanityMax = 170.0f;
+
 // Candidates from the differential search, see docs/ghidra.md.
 //
 // WARNING: these are raw module offsets for RDR2.exe 1.0.1491.50, not AOB
