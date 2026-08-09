@@ -137,6 +137,28 @@ bool carries_tag(float value) {
 // handed back its own previous value as a source.
 bool is_our_own_output(float value) { return carries_tag(value); }
 
+// One correction per frame, during a ramp.
+//
+// The tag catches a corrected value that is copied onwards untouched. It cannot
+// catch one that has been through the blend spring, because arithmetic rounds
+// the low mantissa bits away -- and that is exactly what happens while the bars
+// move. The result was two or three corrections in the same frame, compounding
+// into a value 25 percent too narrow.
+//
+// The earlier answer to this was a tolerance against recently written values.
+// It works, but its correctness depends on picking a ring size and a threshold
+// that separate "the same value after arithmetic" from "the next frame's
+// value", and I got that badly wrong once already: 512 entries turned the guard
+// into a sieve that discarded 94 percent of all corrections.
+//
+// The weight is a better frame marker than any tolerance. The game recomputes
+// it once per frame, so during a ramp an identical weight means we are still in
+// the same frame and have already done our work. No tuning, no thresholds.
+//
+// At a settled weight this does not apply -- there the value arrives as a plain
+// copy and the tag is enough, which the logs confirm.
+std::atomic<float> g_corrected_at_weight{-1.0f};
+
 std::size_t record_destination(std::uintptr_t dst) {
     const std::size_t known = g_dst_known.load(std::memory_order_acquire);
     for (std::size_t i = 0; i < known; ++i) {
@@ -243,6 +265,13 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         return;
     }
 
+    // Already corrected in this frame -- see g_corrected_at_weight.
+    const bool ramping = weight > 0.0f && weight < 0.999f;
+    if (ramping && weight == g_corrected_at_weight.load(std::memory_order_relaxed)) {
+        finish(original, "skip-fra");
+        return;
+    }
+
     float result = original;
 
     switch (g_config.mode) {
@@ -283,6 +312,9 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
 
     result = tag(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
+    if (ramping) {
+        g_corrected_at_weight.store(weight, std::memory_order_relaxed);
+    }
     finish(result, "CORRECT");
 
     const int call = g_calls.fetch_add(1);
