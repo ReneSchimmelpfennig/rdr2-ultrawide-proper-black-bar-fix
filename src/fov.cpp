@@ -62,34 +62,42 @@ std::atomic<std::size_t> g_dst_known{0};
 std::uintptr_t g_dst[kMaxDestinations]{};
 std::atomic<unsigned long long> g_dst_count[kMaxDestinations]{};
 
-// Every value we have recently written, across all destinations.
-//
 // The correction must be applied once per authored value, never to its own
 // output. The camera states feed each other, so a value corrected in one of
-// them arrives as another one's source -- and a per-destination guard misses
-// exactly that, because the compounding travels *between* structures. Left
-// unchecked it multiplies every frame until the game's own clamp stops it:
-// measured as roughly a threefold zoom where 1.34 was intended.
+// them arrives as another one's source. Left unchecked that multiplies every
+// frame until the game's own clamp stops it -- measured as roughly a threefold
+// zoom where 1.34 was intended.
 //
-// Bit-exact comparison. An authored FOV colliding with a corrected one to the
-// last mantissa bit is possible in principle; the cost would be one uncorrected
-// frame, which is invisible.
-constexpr std::size_t kRecentSize = 32;
-std::atomic<float> g_recent[kRecentSize]{};
-std::atomic<std::size_t> g_recent_next{0};
+// The first attempt remembered the last 32 values written. That was too short
+// by an order of magnitude: two dozen destinations each write once per frame,
+// so the memory covered barely a single frame. A value making its way onwards
+// two frames later had already been forgotten and got corrected a second time,
+// on some frames but not others -- visible as the picture jittering between
+// two fields of view during a transition.
+//
+// So instead of remembering the values, mark them. The low eight mantissa bits
+// carry a constant pattern, which for a value near 34 degrees moves it by about
+// a thousandth of a degree -- far below anything visible, and unmistakable on
+// the way back in.
+//
+// An authored value can carry the pattern by chance, once in 256. The cost is a
+// single uncorrected frame, which nobody can see.
+constexpr std::uint32_t kTagMask = 0x000000FFu;
+constexpr std::uint32_t kTagValue = 0x000000A5u;
 
-bool is_our_own_output(float value) {
-    for (std::size_t i = 0; i < kRecentSize; ++i) {
-        if (g_recent[i].load(std::memory_order_relaxed) == value) {
-            return true;
-        }
-    }
-    return false;
+float tag(float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    bits = (bits & ~kTagMask) | kTagValue;
+    float tagged = 0.0f;
+    std::memcpy(&tagged, &bits, sizeof(tagged));
+    return tagged;
 }
 
-void remember_output(float value) {
-    const std::size_t slot = g_recent_next.fetch_add(1, std::memory_order_relaxed) % kRecentSize;
-    g_recent[slot].store(value, std::memory_order_relaxed);
+bool is_our_own_output(float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return (bits & kTagMask) == kTagValue;
 }
 
 std::size_t record_destination(std::uintptr_t dst) {
@@ -190,8 +198,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         }
     }
 
+    result = tag(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
-    remember_output(result);
 
     const int call = g_calls.fetch_add(1);
     if (call < kLoggedCalls) {
