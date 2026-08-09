@@ -5,8 +5,9 @@
 
 #include "mem.h"
 
-// The actual fix: hooks the camera's field-of-view getter and returns a value
-// corrected for the display aspect, blended by the letterbox weight.
+// The actual fix: hooks ApplyCameraState and corrects the field of view of the
+// camera that is actually rendered, blended by the letterbox weight.
+// See docs/how-it-works.md.
 namespace fov {
 
 enum class Mode {
@@ -85,7 +86,7 @@ void set_force(bool on);
 // Note for whoever looks at the 2D layout next: zeroing the two bar-height
 // floats every frame was tried and does nothing. The 2D layer keeps laying out
 // for the 2560 x 1090 window regardless, so it takes its safe area from
-// somewhere else. See docs/wirkungskette.md.
+// somewhere else. See docs/how-it-works.md.
 
 // Logs every camera-state destination the detour has seen, with hit counts and
 // whether it is the master. Call after a run to find out which structures exist

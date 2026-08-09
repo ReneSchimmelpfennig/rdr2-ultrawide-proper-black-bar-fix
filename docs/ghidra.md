@@ -1,317 +1,308 @@
-# Was im entpackten Image steht
+# What is inside the unpacked image
 
-Analyse des validierten Dumps (siehe [packing.md](packing.md)) in Ghidra,
+Analysis of the validated dump (see [packing.md](packing.md)) in Ghidra,
 2026-08-09, RDR2.exe 1.0.1491.50.
 
-Alle Adressen als **Moduloffset**. Im Dump liegt `ImageBase` bei
-`0x7FF6750A0000`; Ghidra-Adresse = Basis + Offset.
+All addresses are **module offsets**. In the dump `ImageBase` is
+`0x7FF6750A0000`; Ghidra address = base + offset.
 
-## Gefundene Funktionen und Globals
+## Functions and globals found
 
-| Offset | Was |
+| Offset | What |
 |---|---|
-| `+0x3200E8` | `LetterboxUpdate()` — rechnet Gewicht und Balken, pro Frame |
-| `+0x320545` | darin: der Store `mov byte [rip+X], 0FFh` (unser AOB-Anker) |
-| `+0x174230` | `GetLetterboxWeight()` — `return weight` |
-| `+0x173964` | `GetAspectRatio()` — `return g_aspect` |
-| `+0x19FBCC` | `GetViewportAspect()` — Breite/Höhe aus dem Viewport, virtueller Call |
-| `+0x1A1358` | `BlendAspectToCutscene(obj, aspect)` — Lerp mit dem Letterbox-Gewicht |
+| `+0x3200E8` | `LetterboxUpdate()` -- computes weight and bars, once per frame |
+| `+0x320545` | inside it: the store `mov byte [rip+X], 0FFh` (our AOB anchor) |
+| `+0x174230` | `GetLetterboxWeight()` -- `return weight` |
+| `+0x173964` | `GetAspectRatio()` -- `return g_aspect` |
+| `+0x173ED4` | `GetFov()` -- `return g_fovMaster` |
+| `+0x170028` | `ApplyCameraState(dst, src)` -- **the hook site** |
+| `+0x19FBCC` | `GetViewportAspect()` -- width/height from the viewport, virtual call |
+| `+0x1A1358` | `BlendAspectToCutscene(obj, aspect)` -- lerp with the letterbox weight |
 | `+0x39751AC` | `g_letterboxWeight` (float) |
-| `+0x39751B4` | das Anker-Byte, konstant `0xFF` |
-| `+0x395B458` | `g_aspect` (float) = **2.3888888** im Dump = 3440/1440 |
+| `+0x39751B4` | the anchor byte, constant `0xFF` |
+| `+0x395B458` | `g_aspect` (float) = **2.3888888** in the dump = 3440/1440 |
+| `+0x3EA0BE0` | `g_fovMaster` (float), inside a camera state at `+0x3EA0B80 +0x60` |
 
-## Die Letterbox-Rechnung, verifiziert
+## The letterbox computation, verified
 
-`LetterboxUpdate()` endet mit exakt dem, was gemessen wurde:
+`LetterboxUpdate()` ends with exactly what was measured:
 
 ```c
-weight = max(kanal_a, kanal_b);              // +0x39751AC
-bar235   = (1.0 - (16/9)/aspect_235) * 0.5 * weight;
-barScreen= (1.0 - (16/9)/GetAspectRatio()) * 0.5 * weight;
-g_anchor = 0xff;                             // unbedingt, jeden Frame
+weight    = max(channel_a, channel_b);          // +0x39751AC
+bar235    = (1.0 - (16/9)/aspect_235)        * 0.5 * weight;
+barScreen = (1.0 - (16/9)/GetAspectRatio())  * 0.5 * weight;
+g_anchor  = 0xff;                               // unconditionally, every frame
 ```
 
-Konstanten aus `.rdata`, direkt aus dem Dump gelesen:
+Constants from `.rdata`, read straight out of the dump:
 
-| Adresse | Wert |
+| Address | Value |
 |---|---|
 | `+0x330C7A8` | `1.0` |
 | `+0x3311378` | `1.7777778` = **16/9** |
 | `+0x330F3D4` | `0.5` |
-| `+0x330F388` | `1e-06` (Epsilon) |
+| `+0x330F388` | `1e-06` (epsilon) |
 
-Damit ist `(1 - k)/2 = 0.127907` nicht mehr Interpretation, sondern nachgelesen.
-Das Anker-Byte wird als letzte Anweisung unbedingt auf `0xFF` gesetzt — deshalb
-war es in 293 gemessenen Frames konstant. Kein Messfehler, so ist es gebaut.
+With that, `(1 - k)/2 = 0.127907` is no longer an interpretation but something
+read off. The anchor byte is set to `0xFF` unconditionally as the last statement
+-- which is why it was constant across 293 measured frames. Not a measurement
+error; that is how it is built.
 
-## Negativergebnis: das Gewicht führt nicht zur FOV
+## Negative result: the weight does not lead to the FOV
 
-`GetLetterboxWeight()` hat genau **drei** Aufrufer, und keiner davon setzt eine
-FOV:
+`GetLetterboxWeight()` has exactly **three** callers, and none of them sets a
+field of view:
 
-1. `+0x1A1358` — Lerp eines **Seitenverhältnisses** gegen den Cutscene-Wert.
-   Die Basis dieses Lerps kommt aus `GetViewportAspect()`, ist also Breite/Höhe,
-   keine FOV.
-2. `+0x6F1910` (`*param_1 = weight`) — schreibt das Gewicht in einen Puffer,
-   sieht nach Shader-Konstante oder Script-Native aus.
-3. ein Sprung ohne zugeordnete Funktion.
+1. `+0x1A1358` -- lerp of an **aspect ratio** against the cutscene value. The
+   base of that lerp comes from `GetViewportAspect()`, so it is width/height, not
+   a field of view.
+2. `+0x6F1910` (`*param_1 = weight`) -- writes the weight into a buffer, looks
+   like a shader constant or a script native.
+3. a jump with no associated function.
 
-Der einzige Aufrufer von (1) vergleicht zwei geblendete Aspects und setzt daraus
-ein Bool — kein Kameracode.
+The only caller of (1) compares two blended aspects and derives a bool from them
+-- not camera code.
 
-**Konsequenz:** Das Letterbox-Gewicht speist die Balken und die
-Aspect-Interpolation, nicht die Kamera. Die FOV-Schreibstelle muss über einen
-anderen Weg gefunden werden; der Pfad „Xrefs auf das Gewicht → Kamera" ist
-ausgeschöpft.
+**Consequence:** the letterbox weight feeds the bars and the aspect
+interpolation, not the camera. The path "xrefs on the weight → camera" is
+exhausted.
 
-## Verworfen: Suche über die Deg→Rad-Konstante
+## Rejected: searching via the degrees-to-radians constant
 
-`0.017453292` steht neunmal in `.rdata` — fünfmal davon als Vierergruppe, also
-als XMM-Vektorkonstante für SIMD. Der interessanteste Skalar liegt bei
-`+0x3311368`, direkt neben `0.999999` (`+0x331136C`) und `16/9` (`+0x3311378`),
-die der Letterbox-Code benutzt; gleicher Konstantenpool, vermutlich dieselbe
-Übersetzungseinheit.
+`0.017453292` appears nine times in `.rdata` -- five of those as a group of four,
+i.e. as an XMM vector constant for SIMD. The most interesting scalar is at
+`+0x3311368`, right next to `0.999999` (`+0x331136C`) and `16/9` (`+0x3311378`)
+which the letterbox code uses; same constant pool, presumably the same
+translation unit.
 
-**Trotzdem unbrauchbar:** Die Xrefs sind bei 40 gekappt und offensichtlich
-weit darüber. Eine Engine rechnet an hunderten Stellen Grad in Bogenmaß um.
-Das ist kein Filter. Die `rad2deg`-Konstante (`+0x330F200 ff.`) verhält sich
-genauso.
+**Useless anyway:** the xrefs are capped at 40 and clearly far beyond that. An
+engine converts degrees to radians in hundreds of places. That is not a filter.
+The `rad2deg` constant (`+0x330F200` ff.) behaves the same.
 
-Nicht nochmal versuchen.
+Do not try again.
 
-## Verfolgt: die Objektspur
+## Followed: the object trail
 
-| Offset | Was |
+| Offset | What |
 |---|---|
-| `+0x3EA04C8` | `g_cinematicMgr` — Singleton-Pointer, `GetCinematicMgr()` gibt ihn zurück |
-| `+0x440 37C` | `GetCutsceneAspect(mgr)` = `*(float*)(*(mgr+0x568)+0x80)` |
+| `+0x3EA04C8` | `g_cinematicMgr` -- singleton pointer, returned by `GetCinematicMgr()` |
+| `+0x44037C` | `GetCutsceneAspect(mgr)` = `*(float*)(*(mgr+0x568)+0x80)` |
 
-`GetCutsceneAspect()` hat zwei Aufrufer, `GetAspectRatio()` fünfzehn. Alle
-untersuchten Pfade enden bei **Seitenverhältnissen**, nirgends bei einer FOV.
-Das Feld `+0x80` des Unterobjekts bei `+0x568` ist ein Aspect, keine Brennweite.
+`GetCutsceneAspect()` has two callers, `GetAspectRatio()` fifteen. Every path
+examined ends at an **aspect ratio**, never at a field of view. The `+0x80` field
+of the sub-object at `+0x568` is an aspect, not a focal length.
 
-Damit ist auch dieser Weg vorerst erschöpft: Der gesamte Letterbox- und
-Cinematic-Zweig rechnet mit Aspects und Balkenhöhen, die Kamera-FOV wird
-woanders gesetzt.
+So this route is exhausted too: the entire letterbox and cinematic branch deals
+in aspects and bar heights. The camera FOV is set elsewhere.
 
-## Ergebnis der Differenzsuche (2026-08-09)
+## Result of the differential search
 
-Gescannt wurde `.data`, 35,6 MB. Pass 1 im Gameplay fand 3860 Floats im
-Gradfenster und 11395 im Bogenmaßfenster. Nach Cutscene-Vergleich und
-Folgeframe blieben **je zwei** Kandidaten übrig, die sich pro Frame ändern:
+`.data` was scanned, 35.6 MB. Pass 1 in gameplay found 3860 floats in the degree
+window and 11395 in the radian window. After comparing against a cutscene and the
+following frame, **two candidates each** remained that change every frame:
 
-| Offset | Gameplay | Cutscene | +1 Frame | Fenster |
+| Offset | Gameplay | Cutscene | +1 frame | Window |
 |---|---|---|---|---|
-| `+0x39B06E4` | **45.000** | 48.840 | 26.991 | Grad |
-| `+0x3AE24B8` | **45.000** | 48.840 | 26.991 | Grad |
-| `+0x3A11250` | 1.000 | 0.598 | 0.567 | Bogenmaß |
-| `+0x3A11254` | 1.000 | 0.801 | 0.820 | Bogenmaß |
+| `+0x39B06E4` | **45.000** | 48.840 | 26.991 | degrees |
+| `+0x3AE24B8` | **45.000** | 48.840 | 26.991 | degrees |
+| `+0x3A11250` | 1.000 | 0.598 | 0.567 | radians |
+| `+0x3A11254` | 1.000 | 0.801 | 0.820 | radians |
 
-Die beiden Gradkandidaten tragen identische Werte, sind also zwei Kopien
-desselben Wertes. Exakt `45.000` im Gameplay und Änderung in jedem Cutscene-
-Frame — das Profil einer Kamera-FOV.
+The two degree candidates carry identical values, so they are two copies of the
+same value. Exactly `45.000` in gameplay and a change in every cutscene frame --
+the profile of a camera field of view.
 
-Die beiden Bogenmaßkandidaten liegen direkt nebeneinander und stehen im Gameplay
-beide auf `1.0`. Das sieht nach einem Skalierungspaar (x, y) aus, nicht nach
-einem Winkel. Vorerst zurückgestellt.
+The two radian candidates sit next to each other and are both `1.0` in gameplay.
+That looks like a scale pair (x, y), not an angle. Set aside.
 
-### Woher die Gradkandidaten kommen
+### Where the degree candidates come from
 
-`+0x3AE24B8` wird in einer Per-Frame-Funktion so gefüllt:
+`+0x3AE24B8` is filled in a per-frame function like this:
 
 ```c
 DAT_7ff678b824b8 = *(float *)(index * 0x690 + 0x7ff678f61050);
-_DAT_7ff679fdf270 = DAT_7ff678b824b8;   // viermal hintereinander -> XMM-Broadcast
+_DAT_7ff679fdf270 = DAT_7ff678b824b8;   // four times in a row -> XMM broadcast
 ```
 
-Also ein **Array von View-Strukturen mit Schrittweite `0x690`**, Basis um
-`+0x3EC0B00`. Der Wert wird viermal nebeneinander abgelegt, wie eine
-Shader-Konstante. `+0x3AE24B8` ist damit nur eine Kopie, nicht die Quelle.
+So an **array of view structures with a stride of `0x690`**, based around
+`+0x3EC0B00`. The value is stored four times side by side, like a shader
+constant. `+0x3AE24B8` is therefore only a copy, not the source.
 
-`+0x39B06E4` wird in einer anderen Per-Frame-Funktion aus einem Getter
-(`+0x173ED4`, `return DAT_7ff678f40be0`) geschrieben, direkt gefolgt von einem
-`fabs(neu - alt) < eps`-Vergleich. Das ist eine Änderungserkennung, der Wert
-selbst ist wieder nur ein Cache.
+`+0x39B06E4` is written in a different per-frame function from a getter
+(`+0x173ED4`, `return DAT_7ff678f40be0`), immediately followed by a
+`fabs(new - old) < eps` comparison. That is change detection; the value itself is
+again only a cache.
 
-### Warum die Quelle nicht in der Kandidatenliste steht
+### Why the source is not in the candidate list
 
-`+0x3EA0BE0` liegt im gescannten Bereich, taucht aber nicht auf. Passt zum
-Befund: die Suche vergleicht **feste Adressen** über die Zeit. Ein Wert, der
-durch ein Array wandert oder indirekt beschrieben wird, fällt durch dieses
-Raster — die festen Kopien dagegen nicht. Genau die haben wir gefunden.
+`+0x3EA0BE0` lies inside the scanned range but does not show up. That fits the
+finding: the search compares **fixed addresses** over time. A value that travels
+through an array or is written indirectly falls through that net -- the fixed
+copies do not. Those are exactly what we found.
 
-Xrefs auf `+0x3EA0BE0` zeigen nur Leser, keinen Schreiber: der Wert wird über
-eine berechnete Adresse gesetzt, die Ghidra statisch nicht auflöst.
+Xrefs on `+0x3EA0BE0` show only readers, no writer: the value is set through a
+computed address that Ghidra does not resolve statically.
 
-### Offen: der Nachweis fehlt noch
+## Proven: the FOV is found
 
-Dass `45.000` eine FOV in Grad ist, ist **plausibel, aber nicht bewiesen**.
-Belegt ist nur: der Wert steht im Gameplay konstant auf 45, ändert sich in
-Cutscenes jeden Frame, und wird als Shader-Konstante breitgestellt. Der
-eigentliche Beweis wäre, ihn zu verändern und die Bildwirkung zu sehen.
+There is no FOV slider in the game menu, so the test used the **binoculars** --
+continuous zoom, hence a continuous FOV sweep rather than discrete steps. The
+result is unambiguous:
 
-## BEWIESEN: die FOV ist gefunden (2026-08-09)
-
-Kein FOV-Regler im Spielmenü, deshalb der Test mit dem **Fernglas** — kontinuierlicher
-Zoom, also ein durchgehender FOV-Verlauf statt diskreter Stufen. Das Ergebnis ist
-eindeutig:
-
-| Zustand | Wert |
+| State | Value |
 |---|---|
-| Normales Gameplay | **51,282°** (89 von 225 Messzeilen) |
-| Leicht verändert (Bewegung, Reiten) | 52,183° |
-| Fernglas angesetzt | 22,620° |
-| Fernglas voll herangezoomt | **8,578°** |
-| Maximum über den ganzen Lauf | 63,589° |
+| Normal gameplay | **51.282°** (89 of 225 measured lines) |
+| Slightly different (moving, riding) | 52.183° |
+| Binoculars raised | 22.620° |
+| Binoculars fully zoomed | **8.578°** |
+| Maximum across the run | 63.589° |
 
-Ein Wert, der beim Heranzoomen auf ein Sechstel fällt, ist ein Blickwinkel.
-Damit ist die Frage beantwortet, ohne dass etwas geschrieben werden musste.
+A value that drops to a sixth when zooming in is a field of view. That settles it
+without anything having to be written.
 
-### Die Rangfolge der drei Adressen
+### The order of the three addresses
 
-`+0x3EA0BE0` ist der **Master**. Die beiden Kopien folgen ihm; in 10 von 225
-Zeilen hinken sie genau einen Frame hinterher, sonst sind alle drei identisch.
-Beim Start stand der Master noch auf `0.0`, während die Kopien schon `45.0`
-trugen — die 45 war also ein Initialwert aus dem Menü, nicht die Gameplay-FOV.
+`+0x3EA0BE0` is the **master**. The two copies follow it; in 10 of 225 lines they
+lag exactly one frame behind, otherwise all three are identical. At startup the
+master was still `0.0` while the copies already carried `45.0` -- so the 45 was
+an initial value from the menu, not the gameplay FOV.
 
-| Offset | Rolle |
+| Offset | Role |
 |---|---|
-| `+0x3EA0BE0` | **Master**, von `GetFov()` (`+0x173ED4`) zurückgegeben |
-| `+0x39B06E4` | Kopie für die Änderungserkennung |
-| `+0x3AE24B8` | Kopie aus dem View-Array, als Shader-Konstante breitgestellt |
+| `+0x3EA0BE0` | **master**, returned by `GetFov()` (`+0x173ED4`) |
+| `+0x39B06E4` | copy used for change detection |
+| `+0x3AE24B8` | copy from the view array, broadcast as a shader constant |
 
-### Es ist die vertikale FOV
+### It is the vertical FOV
 
-Nicht direkt gemessen, aber die Gegenrechnung lässt nur eine Deutung zu:
+Not measured directly, but the arithmetic allows only one reading:
 
-| Annahme | Folge bei 3440x1440 |
+| Assumption | Consequence at 3440x1440 |
 |---|---|
-| 51,282° ist **vertikal** | hFOV = 97,8° — plausibel |
-| 51,282° ist horizontal | vFOV = 22,7° — unmöglich eng |
+| 51.282° is **vertical** | hFOV = 97.8° -- plausible |
+| 51.282° is horizontal | vFOV = 22.7° -- impossibly narrow |
 
-Das deckt sich mit der Designnotiz: RDR2 ist Hor+, die vFOV bleibt konstant und
-die hFOV wächst mit dem Seitenverhältnis. Genau diese Größe braucht
-`framing::corrected_vfov_deg()`, und zwar in **Grad** — die Funktion nimmt Grad,
-passt also direkt.
+This matches the design note: RDR2 is Hor+, the vFOV stays constant and the hFOV
+grows with the aspect ratio. That is exactly the quantity
+`framing::corrected_vfov_deg()` needs, and in **degrees**, which is what the
+function takes.
 
-### Erledigt: die Bogenmaß-Kandidaten
+### Settled: the radian candidates
 
-`+0x3A11250` und `+0x3A11254` bewegen sich unabhängig von der FOV. Ihr Betrag
-`sqrt(x²+y²)` schwankt zwischen 0,35 und 1,0 — ein Richtungsvektor ist
-plausibel, aber nicht belegt. Für den Fix irrelevant, nicht weiter verfolgt.
+`+0x3A11250` and `+0x3A11254` move independently of the FOV. Their magnitude
+`sqrt(x²+y²)` varies between 0.35 and 1.0 -- a direction vector is plausible but
+not established. Irrelevant to the fix, not pursued.
 
-## Zweite unabhängige Bestätigung: die Brennweitenformel
+## Second independent confirmation: the focal length formula
 
-Der zweite Leser des Masters (`+0xF98FE8`) rechnet:
+The second reader of the master (`+0xF98FE8`) computes:
 
 ```c
-t = tanf(master * 0.5 * 0.017453292);   // tan(vFOV/2), Konstante = deg2rad
-f = 24.0 / (t + t);                     // geklemmt auf <= 9999
+t = tanf(master * 0.5 * 0.017453292);   // tan(vFOV/2), constant = deg2rad
+f = 24.0 / (t + t);                     // clamped to <= 9999
 ```
 
-`24 / (2·tan(FOV/2))` ist die photographische Brennweite in Millimetern, und
-**24 mm ist die Höhe** des Kleinbildformats (36×24). Damit ist unabhängig von
-der Aspect-Rückrechnung bestätigt: der Wert ist die **vertikale** FOV, als
-voller Winkel, in Grad. Genau die Form, die `framing::corrected_vfov_deg()`
-erwartet.
+`24 / (2·tan(FOV/2))` is the photographic focal length in millimetres, and
+**24 mm is the height** of a 35 mm frame (36×24). Independently of the aspect
+arithmetic, this confirms the value is the **vertical** FOV, as a full angle, in
+degrees.
 
-Nebenbei ist damit auch klar, dass eine FOV-Änderung die Schärfentiefe
-mitzieht — diese Brennweite dürfte in die DOF-Rechnung gehen.
+It also means a change in FOV drags depth of field along with it -- this focal
+length presumably feeds the DOF computation.
 
-## Die View-Struktur
+## The view structure
 
-| Offset in der Struktur | Inhalt |
+| Offset in the structure | Content |
 |---|---|
-| `+0x000` | View-Position (x, y, z, w) |
-| `+0x548` | unbekannt |
-| `+0x550` | **FOV** — Quelle der Shader-Konstante |
+| `+0x000` | view position (x, y, z, w) |
+| `+0x548` | unknown |
+| `+0x550` | **FOV** -- source of the shader constant |
 
-Basis `0x7ff678f60b00` (Moduloffset `+0x3EC0B00`), Schrittweite **`0x690`**, Index
-kommt aus dem TLS-Block. Also ein Array von View-Konstantenpuffern, vermutlich
-eines pro Auge/Kaskade/Frame-in-flight.
+Base `0x7ff678f60b00` (module offset `+0x3EC0B00`), stride **`0x690`**, index
+comes from the TLS block. An array of view constant buffers, presumably one per
+eye/cascade/frame-in-flight.
 
-## Ergebnis des Getter-Hooks (2026-08-09): wirkungslos aufs Bild
+## Result of the getter hook: no effect on the picture
 
-Der Hook auf `GetFov()` (`+0x173ED4`) läuft nachweislich — das Log zeigt
-`50.0000 -> 25.0000` — und das Bild bleibt unverändert. Die Beobachtung daneben
-erklärt warum:
+The hook on `GetFov()` (`+0x173ED4`) demonstrably runs -- the log shows
+`50.0000 -> 25.0000` -- and the picture stays unchanged. The observation next to
+it explains why:
 
-| Wert | Verhalten mit aktivem Hook |
+| Value | Behaviour with the hook active |
 |---|---|
-| `degA` (`+0x39B06E4`) | **halbiert**, in 279 von 284 Zeilen exakt `getter/2` |
-| `degB` (`+0x3AE24B8`) | unverändert beim vollen Wert |
-| Master (`+0x3EA0BE0`) | unverändert |
+| `degA` (`+0x39B06E4`) | **halved**, in 279 of 284 lines exactly `getter/2` |
+| `degB` (`+0x3AE24B8`) | unchanged, at the full value |
+| Master (`+0x3EA0BE0`) | unchanged |
 
-Der Getter speist also nur `degA`, die Kopie für die Änderungserkennung. Die
-View-Struktur und damit die Shader-Konstante hängen an einem anderen Zweig.
+So the getter feeds only `degA`, the copy used for change detection. The view
+structure, and with it the shader constant, hang off a different branch.
 
-**Zwei Erkenntnisse daraus:**
+**Two things follow:**
 
-1. Der Getter ist als Eingriffspunkt erledigt. Seine zehn Aufrufer sind
-   Peripherie (LOD, Schärfentiefe), nicht die Projektion.
-2. **Arxan stört sich nicht an einem MinHook-Trampolin** in `.text` — kein
-   Absturz, kein Zurückschreiben, das Plugin lief danach normal weiter. Damit
-   ist die seit [packing.md](packing.md) offene Frage beantwortet: Detours sind
-   in diesem Codebereich gangbar, es muss kein Byte-Patching sein.
+1. The getter is finished as an intervention point. Its ten callers are
+   peripheral (LOD, depth of field), not the projection.
+2. **Arxan does not mind a MinHook trampoline** in `.text` -- no crash, nothing
+   written back, the plugin kept running. That answers the question left open in
+   [packing.md](packing.md): detours are viable in this code region, byte
+   patching is not required.
 
-Der gesuchte Eingriff liegt **oberhalb** des Masters: bei dem Code, der ihn
-schreibt, bevor Projektionsmatrix und View-Struktur daraus gebaut werden.
+The intervention has to sit **above** the master: at the code that writes it,
+before the projection matrix and the view structure are built from it.
 
-## Fremde Mods als Quelle: geprüft, liefert nichts für die Schreibstelle
+## Third-party mods as a source: checked, nothing for the write site
 
-### „RDR2 display mods" / „RDR2 FOV - Widescreen Mod" (PCGamingWiki)
+### "RDR2 display mods" / "RDR2 FOV - Widescreen Mod" (PCGamingWiki)
 
-Archivpasswort `pcgw`. Die aktuelle Version 3.5 wird von Windows Defender als
-Virus oder unerwünschte Software blockiert und wurde deshalb **nicht** gelesen —
-keine Ausnahme eingetragen, kein Defender abgeschaltet.
+Archive password `pcgw`. The current version 3.5 is blocked by Windows Defender
+as a virus or unwanted software and was therefore **not** read -- no exclusion
+added, Defender not disabled.
 
-Die Version 3.4 von 2019 ließ sich analysieren:
+Version 3.4 from 2019 could be analysed:
 
-| Eigenschaft | Wert |
+| Property | Value |
 |---|---|
-| Architektur | **x86**, GUI |
+| Architecture | **x86**, GUI |
 | Toolchain | Delphi |
-| Imports | nur SHLWAPI, KERNEL32, USER32, ADVAPI32 |
-| Ressourcen | 5,83 MB von 5,89 MB Gesamtgröße, komprimiert |
-| Eingebettetes PE-Modul | eine weitere **x86**-EXE, 220 KB |
+| Imports | only SHLWAPI, KERNEL32, USER32, ADVAPI32 |
+| Resources | 5.83 MB of 5.89 MB total, compressed |
+| Embedded PE module | another **x86** executable, 220 KB |
 
-**Ein 32-Bit-Prozess kann sich nicht in das x64-RDR2 einklinken.** Die Mod
-ändert die FOV also nicht zur Laufzeit über Speicherzugriffe, sondern patcht
-Spieldateien; der „Knopfdruck" schreibt eine Konfiguration, die beim nächsten
-Start greift. Eine Schreibstelle im Code kennt sie gar nicht — sie braucht keine.
+**A 32-bit process cannot hook into 64-bit RDR2.** The mod therefore does not
+change the FOV at runtime through memory access; it patches game files, and the
+"button press" writes a configuration that takes effect on the next launch. It
+does not know a write site in the code -- it does not need one.
 
-Einschränkung: der komprimierte Ressourcenblock wurde nicht ausgepackt, dort
-könnte theoretisch noch ein x64-Modul liegen. Angesichts des Gesamtbilds
-(Delphi-Installer, Schwestermod ersetzt Spieldateien) ist das unwahrscheinlich.
+Caveat: the compressed resource block was not unpacked, so an x64 module could in
+theory still be in there. Given the overall picture (Delphi installer, sister mod
+replaces game files) that is unlikely.
 
-### „Custom First Person FOV + No Black Bars" von vStar925
+### "Custom First Person FOV + No Black Bars" by vStar925
 
-Ein Lenny's-Mod-Loader-Mod, der `update:/x64/data/metadata/cameras.ymt`
-ersetzt. Diese Datei ist **reines XML**, 46.884 Zeilen, und hat unsere Messungen
-unabhängig bestätigt:
+A Lenny's Mod Loader mod that replaces
+`update:/x64/data/metadata/cameras.ymt`. That file is **plain XML**, 46,884
+lines, and it independently confirmed our measurements:
 
-- Die beiliegende Anleitung schreibt ausdrücklich: *„This is VERTICAL FOV, not
-  horizontal"* — dritte unabhängige Bestätigung nach Aspect-Rückrechnung und
-  Brennweitenformel.
-- `<Fov value="51.30000000"/>` steht dutzendfach in der Datei. Das ist **exakt
-  unser gemessener Gameplay-Wert 51,282**. Der Wert im Speicher ist der aus
-  dieser Tabelle geladene.
-- Weitere Werte: 37,8 / 27,0 / 18,2 für andere Kameras, `BaseFov` 50,0.
+- The included readme states explicitly: *"This is VERTICAL FOV, not
+  horizontal"* -- a third independent confirmation after the aspect arithmetic
+  and the focal length formula.
+- `<Fov value="51.30000000"/>` appears dozens of times. That is **exactly our
+  measured gameplay value of 51.282**. The value in memory is the one loaded from
+  this table.
+- Other values: 37.8 / 27.0 / 18.2 for other cameras, `BaseFov` 50.0.
 
-**Entscheidend für dieses Projekt:** In `cameras.ymt` gibt es **keine
-Cutscene-Kamera-FOV** — nur `CutsceneBlendSpringConstant` und
-`CutsceneBlendSpringDampingRatio`. Cutscene-Brennweiten werden pro Einstellung
-in den Cutscene-Daten gesetzt, nicht in der Kameratabelle.
+**Decisive for this project:** `cameras.ymt` contains **no cutscene camera FOV**
+-- only `CutsceneBlendSpringConstant` and `CutsceneBlendSpringDampingRatio`.
+Cutscene focal lengths are set per shot in the cutscene data, not in the camera
+table.
 
-Damit ist belegt, was das Projekt von Anfang an annahm: **ein statischer
-Datei-Tausch kann das Cutscene-Framing nicht korrigieren.** Der Laufzeiteingriff
-ist nicht Bequemlichkeit, sondern notwendig.
+That proves what the project assumed from the start: **a static file swap cannot
+correct cutscene framing.** The runtime intervention is not convenience, it is
+necessary.
 
-## GEFUNDEN: die Schreibstelle (2026-08-09)
+## Found: the write site
 
-Statische Analyse konnte sie nicht liefern, ein Hardware-Watchpoint schon.
-`watchpoint::find_writers()` setzte DR0 auf 19 Threads und protokollierte
-30 Sekunden lang:
+Static analysis could not deliver it; a hardware watchpoint could.
+`watchpoint::find_writers()` set DR0 on 19 threads and logged for 30 seconds:
 
 ```
 armed on 19 thread(s)
@@ -320,72 +311,45 @@ watchpoint: 347 hit(s) recorded
     module +0x17007B     347 hit(s)
 ```
 
-**Genau ein Schreiber.** Die Instruktion davor ist `F3 0F 11 43 60` =
-`movss [rbx+0x60], xmm0` — ein Store über ein *Register*. Genau deshalb fand
-Ghidra keine Referenz auf `+0x3EA0BE0`: es gibt keine RIP-relative.
+**Exactly one writer.** The instruction before it is `F3 0F 11 43 60` =
+`movss [rbx+0x60], xmm0` -- a store through a *register*. That is precisely why
+Ghidra found no reference to `+0x3EA0BE0`: there is no RIP-relative one.
 
-Daraus folgt die Struktur: `rbx = +0x3EA0B80`, die FOV liegt bei **`+0x60`**
-darin. Unmittelbar davor steht `minss xmm0, xmm2`, der Wert wird also geklemmt.
+The structure follows from it: `rbx = +0x3EA0B80`, and the FOV sits at **`+0x60`**
+inside it. Immediately before, `minss xmm0, xmm2` clamps the value.
 
-### Die Funktion
+### The function
 
-`+0x170028`, von uns `ApplyCameraState(dst, src)` genannt. Sie kopiert einen
-Kamerazustand Feld für Feld und klemmt dabei:
+`+0x170028`, which we call `ApplyCameraState(dst, src)`. It copies a camera state
+field by field, clamping as it goes:
 
 ```c
-fVar3 = *(float *)(src + 0x60);          // Quell-FOV
-... Klemmung gegen 1.0 und eine Obergrenze ...
-*(float *)(dst + 0x60) = fVar4;          // unser Store
+fVar3 = *(float *)(src + 0x60);          // source FOV
+... clamping against 1.0 and an upper limit ...
+*(float *)(dst + 0x60) = fVar4;          // our store
 ```
 
-Danach folgen Dutzende weiterer Felder — Position, Rotation, DOF-Parameter. Es
-ist die Übernahmefunktion der Kamera, und sie läuft genau dann, wenn das Spiel
-den Kamerazustand festschreibt: früh genug für die Projektion, die ihn
-unmittelbar danach liest.
+Dozens of further fields follow -- position, rotation, DOF parameters. It is the
+camera's commit function, and it runs exactly when the game fixes the camera
+state: early enough for the projection, which reads it immediately afterwards.
 
-### Signatur
+### Signature
 
 ```
 48 89 5C 24 08 57 48 83 EC 20 F3 0F 6F 42 30 41
 ```
 
-Bei 16 Bytes eindeutig, und **vollständig im Prolog der Zielfunktion** — anders
-als `kFovGetter`, der seine Eindeutigkeit vom Ende einer fremden Funktion borgt.
-Entsprechend robuster gegenüber Spielpatches.
+Unique at 16 bytes, and **entirely inside the prologue of the target function** --
+unlike `kFovGetter`, which borrows its uniqueness from the tail of a neighbouring
+function. Correspondingly more robust against game patches.
 
-### Warum der Hook nach dem Original läuft
+### Why the hook runs after the original
 
-Der Detour ruft erst das Original und korrigiert dann `dst + 0x60`. Damit
-gewinnt unser Wert gegen die Klemmung des Spiels, und er steht, bevor die
-Projektion ihn liest. Korrigiert wird nur, wenn `dst + 0x60` genau die
-Masteradresse ist, die über `kFovGetter` aufgelöst und plausibilisiert wurde —
-so kommt kein zweiter fest verdrahteter Offset ins Spiel.
+The detour calls the original first and then corrects `dst + 0x60`. That way our
+value wins against the game's clamp, and it is in place before the projection
+reads it.
 
-## Historisch: die Suche nach der Schreibstelle
-
-Der **Wert** ist gefunden, die **Schreibstelle** noch nicht. Ghidra sieht auf
-`+0x3EA0BE0` nur zwei Leser und keinen Schreiber — geschrieben wird über eine
-berechnete Adresse, die statisch nicht auflösbar ist.
-
-Statische Analyse ist hier an ihrer Grenze. Beide untersuchten Leser und die
-zehn Aufrufer des Getters sind **Konsumenten**; der Schreiber benutzt eine
-berechnete Adresse und ist in Ghidra nicht auffindbar.
-
-Zwei Wege, in dieser Reihenfolge:
-
-1. **Getter hooken und ausprobieren.** `GetFov()` (`+0x173ED4`) ist ein
-   Zweizeiler und ein sauberes MinHook-Ziel; zehn Aufrufer gehen darüber. Wenn
-   die Projektion dazugehört, ändert sich das Bild sofort sichtbar — und der
-   Fix ist im Kern fertig. Wenn nicht, wissen wir es nach einem Durchlauf.
-   Billig, umkehrbar, und liefert in jedem Fall eine Antwort.
-2. **Hardware-Breakpoint auf den Master.** Falls Weg 1 nichts bewirkt: DR-Register
-   über `SetThreadContext` setzen und im Vectored Exception Handler das RIP
-   protokollieren. Findet den Schreiber unabhängig von berechneten Adressen.
-   Risiko: Arxan prüft möglicherweise die Debugregister.
-
-Weg 1 ist auch deshalb zuerst dran, weil er unabhängig vom Ergebnis den ersten
-echten Hook etabliert — und damit die offene Frage beantwortet, ob Arxan
-Integritätsprüfungen über den entpackten Code laufen lässt.
-
-`framing::corrected_vfov_deg()` und das Letterbox-Gewicht liegen fertig vor; es
-fehlt nur noch die Stelle, an der beides zusammenkommt.
+Which destination gets corrected is decided at runtime -- see
+[how-it-works.md](how-it-works.md). Correcting all of them was wrong: during a
+transition the rendered camera is the blend of two others, so correcting its
+sources and then the blend compounds the correction.

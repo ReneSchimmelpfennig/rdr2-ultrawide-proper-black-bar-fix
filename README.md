@@ -103,13 +103,21 @@ corrects the field of view of the camera that is actually being rendered, once
 per frame, using a factor derived from the game's own letterbox geometry.
 
 Every part of that sentence is load-bearing and each was arrived at by
-measurement. [`docs/`](docs/) has the details, including a list of approaches
-that looked plausible and did not work — hooking the FOV getter, overwriting the
-master global, and searching for the write site statically. RDR2.exe is
-Arxan-packed, so nothing can be found in the file on disk; the plugin dumps the
-decrypted image out of the running process for analysis.
+measurement:
 
-*Note: the notes under `docs/` are in German.*
+- [`docs/how-it-works.md`](docs/how-it-works.md) — the runtime chain, the three
+  rules in the detour, and what did not work
+- [`docs/ghidra.md`](docs/ghidra.md) — what is in the unpacked image, and how the
+  write site was found
+- [`docs/measurements.md`](docs/measurements.md) — the numbers taken from the
+  running game
+- [`docs/packing.md`](docs/packing.md) — RDR2.exe is Arxan-packed, so nothing can
+  be found in the file on disk; the plugin dumps the decrypted image out of the
+  running process for analysis
+
+The "what did not work" list is the part worth reading before touching this:
+hooking the FOV getter, overwriting the master global, and searching for the
+write site statically all look reasonable and all fail.
 
 ## Credits
 

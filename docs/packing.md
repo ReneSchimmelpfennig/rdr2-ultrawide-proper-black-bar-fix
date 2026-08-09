@@ -1,142 +1,140 @@
-# RDR2.exe ist gepackt — was das für AOB-Scanning heißt
+# RDR2.exe is packed -- what that means for AOB scanning
 
-Festgestellt am 2026-08-09 an `RDR2.exe` 1.0.1491.50 (85,41 MB, D:\Programme\Rockstar Games\Red Dead Redemption 2).
+Established on 2026-08-09 against `RDR2.exe` 1.0.1491.50 (85.41 MB).
 
-## Befund
+## The finding
 
-Beide aus `RDR2NoBlackBars.asi` extrahierten Signaturen finden sich in der Datei
-auf der Platte **null Mal**:
+Neither of the two signatures extracted from `RDR2NoBlackBars.asi` occurs in the
+file on disk, not even once:
 
-| Signatur | Treffer in der Datei |
+| Signature | Hits in the file |
 |---|---|
 | `C6 05 ? ? ? ? FF 0F 28 74 24 60` | 0 |
 | `48 8B C4 48 89 58 08 56 57 41 56 48 81 EC C0 00 00 00 0F 29 70 D8` | 0 |
 
-Das ist kein Scanner-Bug. Kontrolltest mit `48 89 5C 24 08` (`mov [rsp+8], rbx`,
-einer der häufigsten x64-Prologe überhaupt): **15 Treffer** in 85 MB. Ein
-normales MSVC-Binary dieser Größe hat davon Zehntausende.
+This is not a scanner bug. Control test with `48 89 5C 24 08` (`mov [rsp+8],
+rbx`, one of the most common x64 prologues there is): **15 hits** in 85 MB. A
+normal MSVC binary of that size has tens of thousands.
 
-Dazu die Sektionstabelle — sie hat elf Einträge, darunter **zwei** namens `.text`
-und zwei komplett namenlose:
+Then the section table -- eleven entries, among them **two** called `.text` and
+two with no name at all:
 
-| # | Name | RVA | Virtual Size |
+| # | Name | RVA | Virtual size |
 |---|---|---|---|
 | 1 | `.text` | 0x1000 | 0x32D7000 (~51 MB) |
 | 2 | `.rdata` | 0x32D8000 | 0x63E400 |
 | 3 | `.data` | 0x3917000 | 0x239A6F8 |
 | 4 | `.pdata` | 0x5CB2000 | 0x231E00 |
-| 5 | *(namenlos)* | 0x5EE4000 | 0x200 |
+| 5 | *(unnamed)* | 0x5EE4000 | 0x200 |
 | 6 | `_RDATA` | 0x5EE5000 | 0xA000 |
-| 7 | *(namenlos)* | 0x5EEF000 | 0x200 |
+| 7 | *(unnamed)* | 0x5EEF000 | 0x200 |
 | 8 | `.rsrc` | 0x5EF0000 | 0x61800 |
 | 9 | `.reloc` | 0x5F52000 | 0xDBE00 |
 | 10 | `.idata` | 0x602E000 | 0x4C00 |
 | 11 | `.text` | 0x6033000 | 0x1364600 (~20 MB) |
 
-Das ist die typische Arxan-Signatur: der eigentliche Code liegt verschlüsselt
-in der Datei und wird erst zur Laufzeit entpackt.
+That is the typical Arxan signature: the actual code sits encrypted in the file
+and is only unpacked at runtime.
 
-## Konsequenzen für das Plugin
+## Consequences for the plugin
 
-1. **Nur im Speicher scannen, nie in der Datei.** Genau deshalb benutzt das
-   bestehende `RDR2NoBlackBars.asi` auch `K32GetModuleInformation` und nicht
+1. **Scan memory only, never the file.** This is exactly why the existing
+   `RDR2NoBlackBars.asi` uses `K32GetModuleInformation` and not
    `CreateFileMapping`.
 
-2. **Alle ausführbaren Sektionen scannen, nicht `.text`.** Ein
-   `GetSection(".text")` erwischt nur die erste der beiden. `mem::executable_sections()`
-   geht über `IMAGE_SCN_MEM_EXECUTE` und erfasst damit auch die namenlosen.
+2. **Scan every executable section, not `.text`.** A `GetSection(".text")` only
+   catches the first of the two. `mem::executable_sections()` goes by
+   `IMAGE_SCN_MEM_EXECUTE` and therefore also covers the unnamed ones.
 
-3. **Der Scan muss wiederholt werden.** Zum Zeitpunkt von `DllMain` ist der Code
-   noch nicht entschlüsselt. `scan_until_found()` versucht es alle 2 s, bis zu
-   60 mal (2 Minuten). Das Log zeigt, beim wievielten Versuch die Signatur
-   auftaucht — dieser Wert ist die eigentlich interessante Messung beim ersten
-   Lauf im Spiel.
+3. **The scan has to be retried.** At `DllMain` time the code may not be
+   decrypted yet. `scan_until_found()` tries every 2 s, up to 60 times. The log
+   records which attempt found the signature -- that number is the interesting
+   measurement on the first run in the game. (In practice: attempt 1.)
 
-4. **Unlesbare Seiten sind normal.** Arxan hinterlässt `PAGE_NOACCESS`- und
-   Guard-Pages mitten in den ausführbaren Sektionen. `mem::find_all()` fragt
-   deshalb per `VirtualQuery` ab und überspringt sie, statt eine Access
-   Violation zu produzieren. Benachbarte lesbare Bereiche werden zusammengefasst,
-   damit eine Signatur über eine Schutzgrenze hinweg trotzdem gefunden wird.
-   Der Selbsttest deckt genau diesen Fall ab (`test_unreadable_pages`).
+4. **Unreadable pages are normal.** Arxan leaves `PAGE_NOACCESS` and guard pages
+   inside the executable sections. `mem::find_all()` therefore asks via
+   `VirtualQuery` and skips them instead of producing an access violation.
+   Adjacent readable ranges are merged so a signature straddling a protection
+   boundary is still found. The self-test covers exactly this case
+   (`test_unreadable_pages`).
 
-## Konsequenz für die statische Analyse: der Dumper
+## Consequence for static analysis: the dumper
 
-Ghidra an der Datei auf der Platte anzusetzen ist sinnlos — an `+0x320545`
-steht dort Müll. Deshalb schreibt das Plugin das entpackte Image selbst heraus
-(`src/dump.*`), aus dem Prozess, in dem es ohnehin läuft. Kein Debugger, damit
-auch kein Risiko, Arxans Anti-Debug zu wecken.
+Pointing Ghidra at the file on disk is pointless -- at `+0x320545` there is
+garbage. So the plugin writes the decrypted image out itself (`src/dump.*`), from
+the process it is running in anyway. No debugger, and therefore no risk of waking
+Arxan's anti-debug.
 
-**Wann:** einmal, nachdem eine vollständige Cutscene beobachtet wurde. Der
-Zeitpunkt ist Absicht — so ist der Cutscene-Code garantiert entschlüsselt und
-resident. Existiert die Datei schon, wird sie nicht neu geschrieben; zum
-Erzwingen einfach löschen.
+**When:** once, after a complete cutscene has been observed. The timing is
+deliberate -- that way the cutscene code is guaranteed to be decrypted and
+resident. If the file already exists it is not rewritten; delete it to force a
+fresh dump.
 
-**Wohin:** `%LOCALAPPDATA%\RDR2UltrawideCutsceneFix\RDR2.dump.exe`, rund 115 MB.
-Gehört nicht ins Repo — `dumps/` und `*.exe` sind in `.gitignore`.
+**Where:** `%LOCALAPPDATA%\RDR2UltrawideCutsceneFix\RDR2.dump.exe`, about 115 MB.
+It does not belong in the repository -- `dumps/` and `*.exe` are in `.gitignore`.
 
-**Was der Dump kann:** Er ist *realigned*. Jeder Sektionsheader bekommt
-`PointerToRawData = VirtualAddress`, und `FileAlignment` wird auf
-`SectionAlignment` angehoben. Dateioffsets sind damit identisch mit RVAs: was
-das Log als `module +0x320545` meldet, liegt im Dump an Offset `0x320545`. Der
-Selbsttest prüft genau diese Eigenschaft, indem er eine eigene Funktion über
-beide Wege vergleicht.
+**What the dump can do:** it is *realigned*. Every section header gets
+`PointerToRawData = VirtualAddress`, and `FileAlignment` is raised to
+`SectionAlignment`. File offsets therefore equal RVAs: what the log reports as
+`module +0x320545` sits at offset `0x320545` in the dump. The self-test verifies
+exactly this property by comparing one of its own functions through both paths.
 
-**Was der Dump nicht kann:** Die Importtabelle wird *nicht* rekonstruiert. Die
-IAT enthält aufgelöste Adressen aus dem dumpenden Prozess, importierte Aufrufe
-erscheinen in Ghidra also als nackte Zeiger statt als benannte Funktionen. Für
-unseren Zweck — Code lesen und Datenreferenzen verfolgen — reicht das. Wer
-benannte Imports braucht, müsste ImpRec-artig nacharbeiten.
+**What the dump cannot do:** the import table is *not* rebuilt. The IAT holds
+resolved addresses from the dumping process, so imported calls appear in Ghidra
+as bare pointers rather than named functions. For our purpose -- reading code and
+following data references -- that is enough. Named imports would need
+ImpRec-style rework.
 
-Unlesbare Seiten (die Arxan-Löcher) werden als Nullen geschrieben und im Log
-gezählt. Im ersten echten Dump waren es **0 Bytes** — das Image lag vollständig
-lesbar im Speicher.
+Unreadable pages (the Arxan holes) are written as zeros and counted in the log.
+In the first real dump there were **0 bytes** -- the image was fully readable in
+memory.
 
-### Validierung des Dumps (2026-08-09)
+### Validating the dump (2026-08-09)
 
-| Prüfung | Ergebnis |
+| Check | Result |
 |---|---|
-| Größe | 121.206.272 Bytes = `SizeOfImage`, 0 unlesbar |
-| Letterbox-Anker | genau an Offset `0x320545`, wie im Log |
-| Unknown prologue | genau an Offset `0x57A458`, wie im Log |
-| Kontrollmuster `48 89 5C 24 08` | **67.455** Treffer (Datei auf Platte: 15) |
-| RIP-Auflösung nachgerechnet | `disp32 = 0x3654C68`, Ziel `0x39751B4` ✓ |
+| Size | 121,206,272 bytes = `SizeOfImage`, 0 unreadable |
+| Letterbox anchor | exactly at offset `0x320545`, as in the log |
+| Unknown prologue | exactly at offset `0x57A458`, as in the log |
+| Control pattern `48 89 5C 24 08` | **67,455** hits (file on disk: 15) |
+| RIP resolution recomputed | `disp32 = 0x3654C68`, target `0x39751B4` ✓ |
 
-Der Sprung von 15 auf 67.455 Treffer beim Kontrollmuster ist der Beweis, dass
-der Dump entschlüsselt ist.
+The jump from 15 to 67,455 hits on the control pattern is the proof that the dump
+is decrypted.
 
-### Fallstrick: SizeOfImage ist nicht sektionsausgerichtet
+### Pitfall: SizeOfImage is not section-aligned
 
-`SizeOfImage` von RDR2.exe ist `0x7397600` — **kein** Vielfaches von
-`SectionAlignment`. Rundet man `SizeOfRawData` der letzten Sektion stur auf,
-beansprucht sie `0xA00` Bytes hinter dem Dateiende, und Ghidra meldet eine
-abgeschnittene Sektion. `realign_headers()` klemmt deshalb gegen die tatsächliche
-Dumpgröße.
+`SizeOfImage` of RDR2.exe is `0x7397600` -- **not** a multiple of
+`SectionAlignment`. Rounding the last section's `SizeOfRawData` up blindly makes
+it claim `0xA00` bytes past the end of the file, and Ghidra then reports a
+truncated section. `realign_headers()` therefore clamps against the actual dump
+size.
 
-Der Selbsttest prüft die Invariante, **reproduziert den Fehler aber nicht**:
-`scanner_test.exe` hat eine seitenausgerichtete `SizeOfImage`, dort fällt das
-Aufrunden mit dem Dateiende zusammen. Gefunden wurde der Fehler an der echten
-Datei, nicht im Test.
+The self-test checks the invariant but **does not reproduce the bug**:
+`scanner_test.exe` has a page-aligned `SizeOfImage`, so there the rounding
+coincides with the end of the file. The bug was found against the real file, not
+in the test.
 
-### Adressen im Dump
+### Addresses inside the dump
 
-`ImageBase` im Dump ist `0x7FF6750A0000` — der Windows-Loader trägt die
-tatsächliche Ladeadresse in den gemappten Header ein, nicht die bevorzugte
-`0x140000000`. Ghidra mappt den Dump also genau dorthin, und die absoluten
-Adressen aus dem Log jenes Laufs passen direkt:
+`ImageBase` in the dump is `0x7FF6750A0000` -- the Windows loader writes the
+actual load address into the mapped header, not the preferred `0x140000000`.
+Ghidra therefore maps the dump exactly there, and the absolute addresses from
+that run's log apply directly:
 
-| Ding | Ghidra-Adresse |
+| Item | Ghidra address |
 |---|---|
-| Letterbox-Anker (der Store) | `0x7FF6753C0545` |
-| Letterbox-Struktur (Anker-Byte) | `0x7FF678A151B4` |
-| Gewicht (Anker − 8) | `0x7FF678A151AC` |
+| Letterbox anchor (the store) | `0x7FF6753C0545` |
+| Letterbox struct (anchor byte) | `0x7FF678A151B4` |
+| Weight (anchor − 8) | `0x7FF678A151AC` |
 | Unknown prologue | `0x7FF67561A458` |
 
-Bei einem neuen Dump ändert sich die Basis durch ASLR — die *Offsets* bleiben.
+A new dump shifts the base through ASLR -- the *offsets* stay.
 
-## Offene Frage
+## Settled: Arxan tolerates detours
 
-Ob Arxan zusätzlich Integritätsprüfungen über den entpackten Code laufen lässt.
-Falls ja, kann ein MinHook-Trampolin im geprüften Bereich einen Crash oder ein
-stilles Zurückschreiben auslösen. Dass `RDR2NoBlackBars.asi` mit direktem
-Byte-Patching funktioniert, spricht dagegen — aber ein Detour ist ein größerer
-Eingriff als ein einzelnes gepatchtes Byte. Beim ersten echten Hook im Auge behalten.
+The open question used to be whether Arxan runs integrity checks over the
+unpacked code, which would make a MinHook trampoline risky. It does not, at least
+not in the regions we touch: the first real hook ran without a crash, without
+being silently reverted, and the plugin kept working afterwards. A hardware
+watchpoint on 19 threads was equally undisturbed.

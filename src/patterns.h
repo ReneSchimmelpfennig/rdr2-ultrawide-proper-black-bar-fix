@@ -8,7 +8,7 @@
 // and the module base moves anyway.
 //
 // Verified against RDR2.exe 1.0.1491.50, measured in the running game -- see
-// docs/messungen.md. Anything here should be re-checked after a game patch;
+// docs/measurements.md. Anything here should be re-checked after a game patch;
 // the plugin logs every hit count on startup for exactly that reason.
 namespace patterns {
 
