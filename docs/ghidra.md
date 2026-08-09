@@ -257,6 +257,56 @@ View-Struktur und damit die Shader-Konstante hängen an einem anderen Zweig.
 Der gesuchte Eingriff liegt **oberhalb** des Masters: bei dem Code, der ihn
 schreibt, bevor Projektionsmatrix und View-Struktur daraus gebaut werden.
 
+## Fremde Mods als Quelle: geprüft, liefert nichts für die Schreibstelle
+
+### „RDR2 display mods" / „RDR2 FOV - Widescreen Mod" (PCGamingWiki)
+
+Archivpasswort `pcgw`. Die aktuelle Version 3.5 wird von Windows Defender als
+Virus oder unerwünschte Software blockiert und wurde deshalb **nicht** gelesen —
+keine Ausnahme eingetragen, kein Defender abgeschaltet.
+
+Die Version 3.4 von 2019 ließ sich analysieren:
+
+| Eigenschaft | Wert |
+|---|---|
+| Architektur | **x86**, GUI |
+| Toolchain | Delphi |
+| Imports | nur SHLWAPI, KERNEL32, USER32, ADVAPI32 |
+| Ressourcen | 5,83 MB von 5,89 MB Gesamtgröße, komprimiert |
+| Eingebettetes PE-Modul | eine weitere **x86**-EXE, 220 KB |
+
+**Ein 32-Bit-Prozess kann sich nicht in das x64-RDR2 einklinken.** Die Mod
+ändert die FOV also nicht zur Laufzeit über Speicherzugriffe, sondern patcht
+Spieldateien; der „Knopfdruck" schreibt eine Konfiguration, die beim nächsten
+Start greift. Eine Schreibstelle im Code kennt sie gar nicht — sie braucht keine.
+
+Einschränkung: der komprimierte Ressourcenblock wurde nicht ausgepackt, dort
+könnte theoretisch noch ein x64-Modul liegen. Angesichts des Gesamtbilds
+(Delphi-Installer, Schwestermod ersetzt Spieldateien) ist das unwahrscheinlich.
+
+### „Custom First Person FOV + No Black Bars" von vStar925
+
+Ein Lenny's-Mod-Loader-Mod, der `update:/x64/data/metadata/cameras.ymt`
+ersetzt. Diese Datei ist **reines XML**, 46.884 Zeilen, und hat unsere Messungen
+unabhängig bestätigt:
+
+- Die beiliegende Anleitung schreibt ausdrücklich: *„This is VERTICAL FOV, not
+  horizontal"* — dritte unabhängige Bestätigung nach Aspect-Rückrechnung und
+  Brennweitenformel.
+- `<Fov value="51.30000000"/>` steht dutzendfach in der Datei. Das ist **exakt
+  unser gemessener Gameplay-Wert 51,282**. Der Wert im Speicher ist der aus
+  dieser Tabelle geladene.
+- Weitere Werte: 37,8 / 27,0 / 18,2 für andere Kameras, `BaseFov` 50,0.
+
+**Entscheidend für dieses Projekt:** In `cameras.ymt` gibt es **keine
+Cutscene-Kamera-FOV** — nur `CutsceneBlendSpringConstant` und
+`CutsceneBlendSpringDampingRatio`. Cutscene-Brennweiten werden pro Einstellung
+in den Cutscene-Daten gesetzt, nicht in der Kameratabelle.
+
+Damit ist belegt, was das Projekt von Anfang an annahm: **ein statischer
+Datei-Tausch kann das Cutscene-Framing nicht korrigieren.** Der Laufzeiteingriff
+ist nicht Bequemlichkeit, sondern notwendig.
+
 ## Nächster Schritt: die Schreibstelle
 
 Der **Wert** ist gefunden, die **Schreibstelle** noch nicht. Ghidra sieht auf
