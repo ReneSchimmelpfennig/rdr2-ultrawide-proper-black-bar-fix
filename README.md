@@ -1,8 +1,12 @@
 # RDR2 Ultrawide Cutscene Fix
 
-Removes the cutscene letterbox in Red Dead Redemption 2 **and keeps the original
+Removes the cutscene black bars in Red Dead Redemption 2 **and keeps the original
 framing**. Existing fixes only remove the bars, which leaves you seeing more of
 the scene than the shot was composed for.
+
+On ultrawide the game boxes cutscenes in on **all four sides** -- pillarbox left
+and right, letterbox top and bottom. At 3440x1440 that is 440 px of side bar and
+175 px of top bar, leaving 2560x1090 of a 3440x1440 screen. All of it goes.
 
 ## The problem
 
@@ -33,7 +37,7 @@ letterbox animation, so the transition matches the bars rather than snapping.
 |---|---|
 | Field of view in cutscenes | works, verified frame by frame against a walkthrough recording |
 | Fade in / fade out | smooth, follows the game's own easing |
-| Black bars | removed |
+| Black bars | removed, pillarbox and letterbox alike |
 | **2D elements without bars** | **not fixed yet — see below** |
 
 ### Known issue: the 2D layer
@@ -43,8 +47,8 @@ old 2560x1090 window, so they appear too small, and the area the bars used to
 cover can show artefacts.
 
 Press **F8** to bring the bars back. The field-of-view correction stays active,
-so you get correct framing with letterboxing — not the goal of this project, but
-a usable state until the 2D layer is sorted out.
+so you get correct framing inside the boxed-in frame — not the goal of this
+project, but a usable state until the 2D layer is sorted out.
 
 Zeroing the game's computed bar heights was tried and has no effect; the 2D
 layer takes its safe area from somewhere else. Tracking that down is a separate

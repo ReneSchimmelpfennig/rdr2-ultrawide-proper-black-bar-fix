@@ -83,9 +83,10 @@ This is a separate piece of work of the same shape as the field-of-view hunt:
 find the value, find the write site, find the intervention point. The cheap
 route (zeroing the known bar heights) has been tried and does nothing.
 
-Fallback at no cost: **F8** brings the bars back. Layout and artefacts are then
-as the game intended and the FOV correction stays active -- correct framing with
-letterboxing. Not the goal of the project, but a usable state.
+Fallback at no cost: **F8** brings the bars back -- pillarbox and letterbox both,
+since one patched byte controls the whole thing. Layout and artefacts are then as
+the game intended and the FOV correction stays active. Not the goal of the
+project, but a usable state.
 
 ## Known limits
 
