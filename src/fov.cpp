@@ -94,11 +94,47 @@ float tag(float value) {
     return tagged;
 }
 
-bool is_our_own_output(float value) {
+bool carries_tag(float value) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
     return (bits & kTagMask) == kTagValue;
 }
+
+// The tag alone is not enough. Some camera states receive a corrected value
+// through the game's blend spring, which means it arrives having been through
+// arithmetic: near-identical in magnitude, but with the tag rounded away.
+// Measured during a transition, a destination took in 48.5954 one frame after
+// we had written 48.5955 elsewhere -- and got corrected a second time. Because
+// the blend ratio moves every frame, so did the double correction, which is
+// what the eye sees as jitter.
+//
+// So also treat a value as ours when it sits within a hair of something we
+// recently wrote. The threshold has room on both sides: the blended copies
+// above differ from our output by about 2e-6 relative, while the nearest
+// genuinely authored value during a ramp is 2.6e-3 away.
+constexpr std::size_t kRecentSize = 512;  // ~20 frames across two dozen states
+constexpr float kRelativeEpsilon = 5e-4f;
+
+std::atomic<float> g_recent[kRecentSize]{};
+std::atomic<std::size_t> g_recent_next{0};
+
+bool near_recent_output(float value) {
+    const float tolerance = std::fabs(value) * kRelativeEpsilon;
+    for (std::size_t i = 0; i < kRecentSize; ++i) {
+        const float remembered = g_recent[i].load(std::memory_order_relaxed);
+        if (remembered != 0.0f && std::fabs(remembered - value) <= tolerance) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void remember_output(float value) {
+    const std::size_t slot = g_recent_next.fetch_add(1, std::memory_order_relaxed) % kRecentSize;
+    g_recent[slot].store(value, std::memory_order_relaxed);
+}
+
+bool is_our_own_output(float value) { return carries_tag(value) || near_recent_output(value); }
 
 std::size_t record_destination(std::uintptr_t dst) {
     const std::size_t known = g_dst_known.load(std::memory_order_acquire);
@@ -208,6 +244,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
 
     result = tag(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
+    remember_output(result);
 
     const int call = g_calls.fetch_add(1);
     if (call < kLoggedCalls) {
