@@ -3,6 +3,7 @@
 #include <MinHook.h>
 
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -47,10 +48,11 @@ void report_environment() {
 // Nothing is hooked or patched yet -- this is the evidence we need before
 // touching the FOV.
 //
-// Returns true once the letterbox signature resolved to exactly one address.
-bool scan_patterns(const mem::Region& module,
-                   const std::vector<mem::NamedRegion>& sections,
-                   bool verbose) {
+// Returns the address of the letterbox flag, or 0 if the signature did not
+// resolve to exactly one hit.
+std::uintptr_t scan_patterns(const mem::Region& module,
+                             const std::vector<mem::NamedRegion>& sections,
+                             bool verbose) {
     const auto scan_one = [&](std::string_view label, std::string_view signature) {
         std::vector<std::uintptr_t> hits;
 
@@ -86,7 +88,7 @@ bool scan_patterns(const mem::Region& module,
         if (letterbox.size() > 1) {
             logger::info("    ambiguous -- signature needs tightening before it can be trusted");
         }
-        return false;
+        return 0;
     }
 
     const std::uintptr_t flag =
@@ -94,13 +96,13 @@ bool scan_patterns(const mem::Region& module,
                                   patterns::kLetterboxFlagStoreLength);
     logger::info("    -> RIP target 0x{:016X} (module +0x{:X}){}", flag, flag - module.base,
                  module.contains(flag) ? "" : "  [OUTSIDE THE MODULE -- suspicious]");
-    return true;
+    return module.contains(flag) ? flag : 0;
 }
 
 // RDR2.exe is packed: on disk the signatures do not exist at all, they only
 // appear once Arxan has decrypted the code. So a single scan at load time is
 // not enough -- retry until the code shows up.
-void scan_until_found(const mem::Region& module) {
+std::uintptr_t scan_until_found(const mem::Region& module) {
     constexpr int kMaxAttempts = 60;
     constexpr DWORD kDelayMs = 2000;
 
@@ -116,15 +118,104 @@ void scan_until_found(const mem::Region& module) {
         if (verbose) {
             logger::info("--- scan attempt {} ---", attempt);
         }
-        if (scan_patterns(module, sections, verbose)) {
-            logger::info("signatures resolved on attempt {} ({} s after load)", attempt,
-                         attempt * kDelayMs / 1000);
-            return;
+        if (const std::uintptr_t flag = scan_patterns(module, sections, verbose); flag != 0) {
+            // attempt 1 happens immediately -- the delay is between attempts.
+            logger::info("signatures resolved on attempt {} ({:.1f} s after load)", attempt,
+                         static_cast<double>((attempt - 1) * kDelayMs) / 1000.0);
+            return flag;
         }
         Sleep(kDelayMs);
     }
 
     logger::info("giving up after {} attempts -- signatures never appeared", kMaxAttempts);
+    return 0;
+}
+
+bool is_readable(std::uintptr_t addr, std::size_t size) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) {
+        return false;
+    }
+    if (mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
+        return false;
+    }
+    const auto block_end = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    return addr + size <= block_end;
+}
+
+// Watches the letterbox flag and the memory immediately around it, purely by
+// reading -- nothing is hooked or written.
+//
+// The open question this answers: the signature stores 0FFh into a *byte*, so
+// on its own the flag is a boolean and cannot carry the smooth 0..1 weight the
+// design wants for blending k. Either a neighbouring value ramps during the
+// transition, in which case it shows up in this window, or no such value exists
+// here and the plugin has to do its own easing. Dumping the neighbourhood on
+// every change settles which.
+void monitor_letterbox_flag(std::uintptr_t flag) {
+    constexpr std::size_t kBefore = 16;
+    constexpr std::size_t kAfter = 48;
+    constexpr std::size_t kWindow = kBefore + kAfter;
+    constexpr DWORD kPollMs = 16;                     // ~ once per frame at 60 Hz
+    constexpr DWORD kDurationMs = 15 * 60 * 1000;     // stop after 15 minutes
+    constexpr int kMaxLines = 1500;                   // keep the log finite
+
+    const std::uintptr_t window_base = flag - kBefore;
+    if (!is_readable(window_base, kWindow)) {
+        logger::info("flag neighbourhood is not readable -- monitoring only the byte itself");
+        if (!is_readable(flag, 1)) {
+            logger::info("flag byte itself is not readable either -- giving up on monitoring");
+            return;
+        }
+    }
+
+    logger::info("");
+    logger::info("watching the letterbox flag for {} minutes, logging every change.",
+                 kDurationMs / 60000);
+    logger::info("window is [flag-0x{:X} .. flag+0x{:X}), flag byte marked with []", kBefore,
+                 kAfter);
+    logger::info("go into a cutscene and back out.");
+
+    std::vector<std::uint8_t> previous(kWindow, 0);
+    std::vector<std::uint8_t> current(kWindow, 0);
+    bool have_previous = false;
+    int lines = 0;
+
+    const DWORD started = GetTickCount();
+    while (GetTickCount() - started < kDurationMs) {
+        if (!is_readable(window_base, kWindow)) {
+            Sleep(kPollMs);
+            continue;
+        }
+        std::memcpy(current.data(), reinterpret_cast<const void*>(window_base), kWindow);
+
+        if (!have_previous || current != previous) {
+            if (lines >= kMaxLines) {
+                logger::info("line budget exhausted -- stopping the watch");
+                return;
+            }
+
+            std::string dump;
+            dump.reserve(kWindow * 3 + 8);
+            for (std::size_t i = 0; i < kWindow; ++i) {
+                if (i == kBefore) {
+                    dump += std::format("[{:02X}] ", current[i]);
+                } else {
+                    dump += std::format("{:02X} ", current[i]);
+                }
+            }
+            logger::info("flag={:02X}  {}", current[kBefore], dump);
+            ++lines;
+
+            previous = current;
+            have_previous = true;
+        }
+
+        Sleep(kPollMs);
+    }
+
+    logger::info("watch finished after {} minutes, {} change(s) logged", kDurationMs / 60000,
+                 lines);
 }
 
 DWORD WINAPI worker(LPVOID) {
@@ -156,7 +247,9 @@ DWORD WINAPI worker(LPVOID) {
     logger::info("RDR2.exe base 0x{:016X}, image size {} bytes ({:.1f} MB)", module.base,
                  module.size, static_cast<double>(module.size) / (1024.0 * 1024.0));
 
-    scan_until_found(module);
+    if (const std::uintptr_t flag = scan_until_found(module); flag != 0) {
+        monitor_letterbox_flag(flag);
+    }
 
     logger::info("skeleton done -- no hooks installed yet");
     logger::close();
