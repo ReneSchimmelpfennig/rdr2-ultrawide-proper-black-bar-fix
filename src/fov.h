@@ -82,15 +82,10 @@ void set_strength(float value);
 void set_force(bool on);
 [[nodiscard]] bool forced();
 
-// Zeroes the two bar-height floats every frame, on top of hiding the bars.
-//
-// Hiding the bars patches the instruction that switches them on, but leaves
-// their computed heights in place. Anything that derives a safe area from those
-// heights -- subtitles, the 2D layer -- therefore still lays out for the 2560 x
-// 1090 window even though nothing is covering the screen any more. Zeroing them
-// tests that theory in one run.
-void set_flatten_bars(bool on);
-[[nodiscard]] bool flattening_bars();
+// Note for whoever looks at the 2D layout next: zeroing the two bar-height
+// floats every frame was tried and does nothing. The 2D layer keeps laying out
+// for the 2560 x 1090 window regardless, so it takes its safe area from
+// somewhere else. See docs/wirkungskette.md.
 
 // Logs every camera-state destination the detour has seen, with hit counts and
 // whether it is the master. Call after a run to find out which structures exist

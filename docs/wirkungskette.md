@@ -70,6 +70,23 @@ Damit es niemand wiederholt:
 - **Eine Toleranz gegen zuletzt geschriebene Werte.** Funktioniert im Prinzip,
   hängt aber an Ringgröße und Schwelle. Mit 512 Einträgen wurde daraus ein Sieb,
   das 94 % aller Korrekturen verwarf.
+- **Die Balkenhöhen auf null setzen, damit die 2D-Schicht bildschirmfüllend
+  layoutet.** Ohne jede Wirkung, sauber gegengeprüft. Die 2D-Schicht bezieht ihre
+  Sicherheitszone also nicht aus diesen beiden Floats.
+
+## Offen: die 2D-Schicht
+
+Ohne Balken sind die 2D-Elemente zu klein — sie layouten weiter für das
+2560x1090-Fenster — und im ehemaligen Balkenbereich zeigen sich Artefakte.
+
+Das ist eine eigenständige Baustelle mit demselben Zuschnitt wie die FOV-Suche:
+Wert finden, Schreibstelle finden, Eingriffspunkt finden. Der billige Weg (die
+bekannten Balkenhöhen nullsetzen) ist geprüft und wirkungslos.
+
+Rückfallposition ohne Aufwand: **F8** holt die Balken zurück. Layout und
+Artefakte sind dann wie vom Spiel vorgesehen, die FOV-Korrektur bleibt aktiv —
+also richtiges Framing mit Balken. Nicht das Projektziel, aber ein
+gebrauchsfähiger Zustand.
 
 ## Bekannte Grenzen
 
