@@ -29,3 +29,6 @@ external/*/
 *.dmp
 ghidra_projects/
 dumps/
+
+# Interne Arbeitsdatei: enthaelt Maschinenumgebung und Pfade
+CLAUDE.md
