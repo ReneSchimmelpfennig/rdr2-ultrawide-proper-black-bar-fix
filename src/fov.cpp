@@ -30,6 +30,7 @@ std::uintptr_t g_weight_addr = 0;
 std::uintptr_t g_bar_addr = 0;
 std::uintptr_t g_master_addr = 0;
 std::uintptr_t g_module_base = 0;
+std::uintptr_t g_shader_fov_addr = 0;  // patterns::candidates::kDegreeCopyB
 Config g_config;
 
 // The detour runs several times per frame from ten call sites, so it must stay
@@ -234,9 +235,16 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                     g_last_sample.store(now, std::memory_order_relaxed);
                 }
                 g_samples.fetch_add(1);
+                // The shader constant reflects whichever camera actually got
+                // rendered. Logging it next to every destination shows which of
+                // the two dozen is the one downstream of the blend -- that is
+                // the only one that should be corrected.
+                const float shader = read_float(g_shader_fov_addr);
                 logger::info(
-                    "  {} dst 0x{:012X}  weight {:.4f}  blend {:.5f}  {:9.4f} -> {:9.4f}",
-                    in_transition ? "RAMP  " : "steady", dst, weight, factor, original, result);
+                    "  {} dst 0x{:012X}  weight {:.4f}  blend {:.5f}  {:9.4f} -> {:9.4f}"
+                    "   shader {:9.4f}",
+                    in_transition ? "RAMP  " : "steady", dst, weight, factor, original, result,
+                    shader);
             }
             break;
         }
@@ -358,6 +366,7 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
              std::uintptr_t anchor, const Config& config) {
     g_config = config;
     g_module_base = module.base;
+    g_shader_fov_addr = module.base + patterns::candidates::kDegreeCopyB;
     g_weight_addr = anchor + patterns::letterbox::kWeight;
     g_bar_addr = anchor + patterns::letterbox::kBarFractionDisplay;
 
