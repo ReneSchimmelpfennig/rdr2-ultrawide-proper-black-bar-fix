@@ -321,7 +321,12 @@ DWORD WINAPI worker(LPVOID) {
             // watchpoint run only saw a steady camera and therefore only found
             // the steady-state writer.
             constexpr unsigned int kWatchMs = 90 * 1000;
-            watchpoint::find_writers(fov::master_address(), module.base, kWatchMs);
+            // Reads as well as writes this time. Our correction lands after
+            // every single write and the picture still reverts, so the question
+            // is no longer who overwrites us -- it is who actually consumes
+            // this value, and whether the projection is among them at all.
+            watchpoint::find_writers(fov::master_address(), module.base, kWatchMs,
+                                     watchpoint::Trap::ReadsAndWrites);
         }
 
         // The differential search has already run and produced the candidates

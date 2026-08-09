@@ -20,6 +20,12 @@ namespace watchpoint {
 // This is the one step where Arxan might object -- anti-tamper commonly checks
 // the debug registers. If the game crashes or the values are silently cleared,
 // that is the answer, and byte-patching the writer becomes the fallback.
-void find_writers(std::uintptr_t address, std::uintptr_t module_base, unsigned int duration_ms);
+enum class Trap {
+    Writes,        // only stores to the address
+    ReadsAndWrites // every access -- also shows who consumes the value
+};
+
+void find_writers(std::uintptr_t address, std::uintptr_t module_base, unsigned int duration_ms,
+                  Trap trap = Trap::Writes);
 
 }  // namespace watchpoint
