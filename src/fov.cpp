@@ -55,24 +55,58 @@ float read_float(std::uintptr_t addr) {
 // Which camera-state structures does the game apply to? Recorded from inside
 // the detour, so no allocation and no logger mutex: a small table plus counts,
 // reported afterwards.
-constexpr std::size_t kMaxDestinations = 24;
+constexpr std::size_t kMaxDestinations = 64;
+constexpr std::size_t kNoSlot = static_cast<std::size_t>(-1);
+
 std::atomic<std::size_t> g_dst_known{0};
 std::uintptr_t g_dst[kMaxDestinations]{};
 std::atomic<unsigned long long> g_dst_count[kMaxDestinations]{};
 
-void record_destination(std::uintptr_t dst) {
+// Every value we have recently written, across all destinations.
+//
+// The correction must be applied once per authored value, never to its own
+// output. The camera states feed each other, so a value corrected in one of
+// them arrives as another one's source -- and a per-destination guard misses
+// exactly that, because the compounding travels *between* structures. Left
+// unchecked it multiplies every frame until the game's own clamp stops it:
+// measured as roughly a threefold zoom where 1.34 was intended.
+//
+// Bit-exact comparison. An authored FOV colliding with a corrected one to the
+// last mantissa bit is possible in principle; the cost would be one uncorrected
+// frame, which is invisible.
+constexpr std::size_t kRecentSize = 32;
+std::atomic<float> g_recent[kRecentSize]{};
+std::atomic<std::size_t> g_recent_next{0};
+
+bool is_our_own_output(float value) {
+    for (std::size_t i = 0; i < kRecentSize; ++i) {
+        if (g_recent[i].load(std::memory_order_relaxed) == value) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void remember_output(float value) {
+    const std::size_t slot = g_recent_next.fetch_add(1, std::memory_order_relaxed) % kRecentSize;
+    g_recent[slot].store(value, std::memory_order_relaxed);
+}
+
+std::size_t record_destination(std::uintptr_t dst) {
     const std::size_t known = g_dst_known.load(std::memory_order_acquire);
     for (std::size_t i = 0; i < known; ++i) {
         if (g_dst[i] == dst) {
             g_dst_count[i].fetch_add(1, std::memory_order_relaxed);
-            return;
+            return i;
         }
     }
     if (known < kMaxDestinations) {
         g_dst[known] = dst;
         g_dst_count[known].store(1, std::memory_order_relaxed);
         g_dst_known.store(known + 1, std::memory_order_release);
+        return known;
     }
+    return kNoSlot;
 }
 
 void detour(std::uintptr_t dst, std::uintptr_t src) {
@@ -92,6 +126,13 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     record_destination(dst);
 
     const float original = read_float(fov_addr);
+
+    // Already one of ours: it travelled here as somebody's source. Correcting it
+    // again is what produced the runaway zoom.
+    if (is_our_own_output(original)) {
+        return;
+    }
+
     float result = original;
     float weight = 0.0f;
 
@@ -150,6 +191,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     }
 
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
+    remember_output(result);
 
     const int call = g_calls.fetch_add(1);
     if (call < kLoggedCalls) {
