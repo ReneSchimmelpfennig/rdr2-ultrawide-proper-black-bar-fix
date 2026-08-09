@@ -63,6 +63,27 @@ std::atomic<std::size_t> g_dst_known{0};
 std::uintptr_t g_dst[kMaxDestinations]{};
 std::atomic<unsigned long long> g_dst_count[kMaxDestinations]{};
 
+// Identifying the camera that is actually rendered.
+//
+// The shader constant carries the field of view of whatever camera made it into
+// the picture, one frame late. So remembering the value each destination ended
+// up with, and comparing it against the shader constant on its next call, says
+// plainly which destination feeds the image: measured at 99% for two of them
+// and 0% for the other twenty-odd.
+//
+// This matters because during a transition the rendered camera is the *blend*
+// of two others. Correcting its sources and then correcting the blend again is
+// what made the picture jitter. Correcting only the rendered camera leaves the
+// blend to work on authored values and applies the correction exactly once.
+std::atomic<float> g_dst_last_final[kMaxDestinations]{};
+std::atomic<unsigned> g_dst_shader_hits[kMaxDestinations]{};
+std::atomic<unsigned> g_dst_shader_samples[kMaxDestinations]{};
+
+// Enough samples to be sure, and a clear majority. The two real ones score ~99%,
+// everything else scores zero, so the threshold is not delicate.
+constexpr unsigned kMinSamples = 20;
+constexpr float kShaderMatch = 5e-3f;  // relative
+
 // The correction must be applied once per authored value, never to its own
 // output. The camera states feed each other, so a value corrected in one of
 // them arrives as another one's source. Left unchecked that multiplies every
@@ -166,15 +187,40 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // screen. So the master feeds peripheral consumers only, and the projection
     // takes its FOV from a different camera state.
     //
-    // ApplyCameraState is generic, so correct every destination and record
-    // which ones exist. Whichever one moves the picture is the one we want.
-    record_destination(dst);
-
+    // ApplyCameraState is generic and runs for two dozen camera states. Only the
+    // one that ends up rendered may be corrected -- see the shader scoring below.
+    const std::size_t slot = record_destination(dst);
     const float original = read_float(fov_addr);
 
-    // Already one of ours: it travelled here as somebody's source. Correcting it
-    // again is what produced the runaway zoom.
-    if (is_our_own_output(original)) {
+    // Score this destination against the shader constant before deciding
+    // anything. The comparison uses the value it carried on the previous call,
+    // which is what the shader constant reflects one frame later.
+    bool is_rendered = false;
+    if (slot != kNoSlot) {
+        const float shader = read_float(g_shader_fov_addr);
+        const unsigned samples = g_dst_shader_samples[slot].load(std::memory_order_relaxed);
+        if (samples > 0) {
+            const float previous = g_dst_last_final[slot].load(std::memory_order_relaxed);
+            if (std::fabs(previous - shader) <= std::fabs(shader) * kShaderMatch) {
+                g_dst_shader_hits[slot].fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        g_dst_shader_samples[slot].fetch_add(1, std::memory_order_relaxed);
+
+        const unsigned hits = g_dst_shader_hits[slot].load(std::memory_order_relaxed);
+        is_rendered = samples >= kMinSamples && hits * 10 >= samples * 6;
+    }
+
+    // Everything that is not the rendered camera stays exactly as authored. It
+    // may well be a source for the blend, and the blend has to work on authored
+    // values if the correction is to remain a single step.
+    //
+    // is_our_own_output stays as a safety net for the case of two rendered
+    // cameras feeding each other.
+    if (!is_rendered || is_our_own_output(original)) {
+        if (slot != kNoSlot) {
+            g_dst_last_final[slot].store(original, std::memory_order_relaxed);
+        }
         return;
     }
 
@@ -253,6 +299,9 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     result = tag(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
     remember_output(result);
+    if (slot != kNoSlot) {
+        g_dst_last_final[slot].store(result, std::memory_order_relaxed);
+    }
 
     const int call = g_calls.fetch_add(1);
     if (call < kLoggedCalls) {
@@ -591,6 +640,10 @@ void report_destinations(std::uintptr_t module_base) {
     for (std::size_t i = 0; i < known; ++i) {
         const std::uintptr_t fov_addr = g_dst[i] + patterns::kCameraStateFov;
         const bool is_master = fov_addr == g_master_addr;
+        const unsigned samples = g_dst_shader_samples[i].load();
+        const unsigned hits = g_dst_shader_hits[i].load();
+        const int percent = samples > 0 ? static_cast<int>(hits * 100 / samples) : 0;
+        logger::info("    [{:>3}% rendered]", percent);
         // Globals sit inside the module; heap-allocated camera objects do not.
         const bool in_module = g_dst[i] > module_base && g_dst[i] - module_base < 0x8000000;
         if (in_module) {
