@@ -200,22 +200,61 @@ passt also direkt.
 `sqrt(x²+y²)` schwankt zwischen 0,35 und 1,0 — ein Richtungsvektor ist
 plausibel, aber nicht belegt. Für den Fix irrelevant, nicht weiter verfolgt.
 
+## Zweite unabhängige Bestätigung: die Brennweitenformel
+
+Der zweite Leser des Masters (`+0xF98FE8`) rechnet:
+
+```c
+t = tanf(master * 0.5 * 0.017453292);   // tan(vFOV/2), Konstante = deg2rad
+f = 24.0 / (t + t);                     // geklemmt auf <= 9999
+```
+
+`24 / (2·tan(FOV/2))` ist die photographische Brennweite in Millimetern, und
+**24 mm ist die Höhe** des Kleinbildformats (36×24). Damit ist unabhängig von
+der Aspect-Rückrechnung bestätigt: der Wert ist die **vertikale** FOV, als
+voller Winkel, in Grad. Genau die Form, die `framing::corrected_vfov_deg()`
+erwartet.
+
+Nebenbei ist damit auch klar, dass eine FOV-Änderung die Schärfentiefe
+mitzieht — diese Brennweite dürfte in die DOF-Rechnung gehen.
+
+## Die View-Struktur
+
+| Offset in der Struktur | Inhalt |
+|---|---|
+| `+0x000` | View-Position (x, y, z, w) |
+| `+0x548` | unbekannt |
+| `+0x550` | **FOV** — Quelle der Shader-Konstante |
+
+Basis `0x7ff678f60b00` (Moduloffset `+0x3EC0B00`), Schrittweite **`0x690`**, Index
+kommt aus dem TLS-Block. Also ein Array von View-Konstantenpuffern, vermutlich
+eines pro Auge/Kaskade/Frame-in-flight.
+
 ## Nächster Schritt: die Schreibstelle
 
 Der **Wert** ist gefunden, die **Schreibstelle** noch nicht. Ghidra sieht auf
 `+0x3EA0BE0` nur zwei Leser und keinen Schreiber — geschrieben wird über eine
 berechnete Adresse, die statisch nicht auflösbar ist.
 
-Zu klären, in dieser Reihenfolge:
+Statische Analyse ist hier an ihrer Grenze. Beide untersuchten Leser und die
+zehn Aufrufer des Getters sind **Konsumenten**; der Schreiber benutzt eine
+berechnete Adresse und ist in Ghidra nicht auffindbar.
 
-1. Den zweiten Leser (`+0xF98FE8`) dekompilieren. Der Getter `+0x173ED4` ist der
-   eine, dieser der andere — zusammen decken sie ab, wer den Master überhaupt
-   benutzt.
-2. Das View-Array aufklären: `*(index * 0x690 + 0x7ff678f61050)`. Wer dort
-   hineinschreibt, committet die Kamera-FOV pro Frame.
-3. Danach die Entscheidung, wo der Hook sitzt. Kandidaten: der Getter (klein und
-   sauber zu hooken, deckt aber nur einen der beiden Leser ab) oder die
-   Schreibstelle selbst (deckt alles ab, ist aber ein größerer Eingriff).
+Zwei Wege, in dieser Reihenfolge:
 
-Erst wenn das steht, greift `framing::corrected_vfov_deg()` mit dem
-Letterbox-Gewicht als Blendfaktor — beides liegt fertig vor.
+1. **Getter hooken und ausprobieren.** `GetFov()` (`+0x173ED4`) ist ein
+   Zweizeiler und ein sauberes MinHook-Ziel; zehn Aufrufer gehen darüber. Wenn
+   die Projektion dazugehört, ändert sich das Bild sofort sichtbar — und der
+   Fix ist im Kern fertig. Wenn nicht, wissen wir es nach einem Durchlauf.
+   Billig, umkehrbar, und liefert in jedem Fall eine Antwort.
+2. **Hardware-Breakpoint auf den Master.** Falls Weg 1 nichts bewirkt: DR-Register
+   über `SetThreadContext` setzen und im Vectored Exception Handler das RIP
+   protokollieren. Findet den Schreiber unabhängig von berechneten Adressen.
+   Risiko: Arxan prüft möglicherweise die Debugregister.
+
+Weg 1 ist auch deshalb zuerst dran, weil er unabhängig vom Ergebnis den ersten
+echten Hook etabliert — und damit die offene Frage beantwortet, ob Arxan
+Integritätsprüfungen über den entpackten Code laufen lässt.
+
+`framing::corrected_vfov_deg()` und das Letterbox-Gewicht liegen fertig vor; es
+fehlt nur noch die Stelle, an der beides zusammenkommt.
