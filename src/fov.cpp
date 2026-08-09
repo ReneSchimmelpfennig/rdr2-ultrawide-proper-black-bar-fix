@@ -9,7 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
+#include <sstream>
 #include <string>
 
 #include "framing.h"
@@ -94,13 +94,35 @@ Config read_config() {
     }
     path.replace_filename(L"fov.txt");
 
-    std::ifstream file(path);
-    if (!file) {
-        logger::info("no fov.txt -- defaulting to TEST mode, factor {:.3f}", config.test_factor);
-        logger::info("  write 'real' into {} to switch to the actual correction",
-                     path.string());
+    // CreateFileW rather than ifstream: the first attempt at this silently
+    // reported "no fov.txt" for a file that demonstrably existed and was
+    // readable, and an ifstream failure carries no reason. Going through Win32
+    // directly gives us GetLastError to log.
+    const HANDLE handle =
+        CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        logger::info("fov.txt not readable (error {}) -- defaulting to TEST mode, factor {:.3f}",
+                     error, config.test_factor);
+        logger::info("  tried: {}", path.string());
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            logger::info("  write 'real', 'poke 25' or 'test 0.75' into that file to change mode");
+        }
         return config;
     }
+
+    char buffer[128]{};
+    DWORD read = 0;
+    const bool ok = ReadFile(handle, buffer, sizeof(buffer) - 1, &read, nullptr) != 0;
+    CloseHandle(handle);
+    if (!ok || read == 0) {
+        logger::info("fov.txt is empty or unreadable -- defaulting to TEST mode");
+        return config;
+    }
+
+    std::istringstream file(std::string(buffer, read));
+    logger::info("fov.txt: '{}'", std::string(buffer, read).substr(0, read));
 
     std::string word;
     file >> word;

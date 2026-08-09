@@ -322,8 +322,19 @@ DWORD WINAPI worker(LPVOID) {
         std::filesystem::path marker = logger::path();
         marker.replace_filename(L"rerun-hunt");
 
+        std::filesystem::path hotkey_marker = logger::path();
+        hotkey_marker.replace_filename(L"hunt-hotkey");
+
         constexpr unsigned int kTimeoutMs = 15 * 60 * 1000;
-        if (std::filesystem::exists(marker, ec)) {
+        if (std::filesystem::exists(hotkey_marker, ec)) {
+            logger::info("'hunt-hotkey' found -- differential search around an external FOV change");
+            const mem::Region data = mem::section(module, ".data");
+            if (!data) {
+                logger::info("no .data section -- cannot hunt");
+            } else {
+                hunt::run_hotkey(data, module.base, 60 * 1000);
+            }
+        } else if (std::filesystem::exists(marker, ec)) {
             logger::info("'rerun-hunt' found -- running the differential search again");
             const mem::Region data = mem::section(module, ".data");
             if (!data) {

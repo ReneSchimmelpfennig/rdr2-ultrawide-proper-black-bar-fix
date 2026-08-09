@@ -45,4 +45,14 @@ void run(const mem::Region& search_area, std::uintptr_t weight_addr,
 // needed to find out.
 void watch(std::uintptr_t module_base, std::uintptr_t weight_addr, unsigned int duration_ms);
 
+// Same differential idea as run(), but triggered by the player instead of by a
+// cutscene: baseline now, then a window in which an *external* tool changes the
+// FOV, then compare.
+//
+// The point is to watch a mod that demonstrably works. Whatever it writes
+// reaches the projection by definition -- which is exactly the knowledge our
+// own getter hook and the poke test failed to produce.
+void run_hotkey(const mem::Region& search_area, std::uintptr_t module_base,
+                unsigned int window_ms);
+
 }  // namespace hunt

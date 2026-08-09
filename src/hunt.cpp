@@ -194,6 +194,42 @@ void run(const mem::Region& search_area, std::uintptr_t weight_addr, std::uintpt
     logger::info("=== FOV hunt done ===");
 }
 
+void run_hotkey(const mem::Region& search_area, std::uintptr_t module_base,
+                unsigned int window_ms) {
+    logger::info("");
+    logger::info("=== FOV hunt, hotkey triggered ===");
+    logger::info("search area 0x{:016X} .. 0x{:016X} ({:.1f} MB)", search_area.base,
+                 search_area.end(), static_cast<double>(search_area.size) / (1024.0 * 1024.0));
+    logger::info("Get into gameplay and hold still. Baseline is taken in 15 seconds.");
+    Sleep(15000);
+
+    std::vector<Candidate> degrees = collect(search_area, kDegLo, kDegHi);
+    std::vector<Candidate> radians = collect(search_area, kRadLo, kRadHi);
+    logger::info("baseline: {} float(s) in [{}..{}], {} in [{}..{}]", degrees.size(), kDegLo,
+                 kDegHi, radians.size(), kRadLo, kRadHi);
+
+    logger::info("");
+    logger::info(">>> NOW press the other mod's FOV hotkey, and change it a LOT. <<<");
+    logger::info(">>> You have {} seconds. Do not move the camera more than you must. <<<",
+                 window_ms / 1000);
+    Sleep(window_ms);
+
+    keep_changed(degrees, kDegLo, kDegHi, kMinChange);
+    keep_changed(radians, kRadLo, kRadHi, kMinChange);
+    logger::info("after the hotkey: {} degree candidate(s), {} radian candidate(s) changed",
+                 degrees.size(), radians.size());
+
+    Sleep(50);
+    resample(degrees);
+    resample(radians);
+
+    report("DEGREES changed by the hotkey", degrees, module_base);
+    report("RADIANS changed by the hotkey", radians, module_base);
+    logger::info("=== hotkey hunt done ===");
+    logger::info("Anything listed here is written by a mod that visibly works,");
+    logger::info("so it reaches the projection -- unlike the getter and the master global.");
+}
+
 void watch(std::uintptr_t module_base, std::uintptr_t weight_addr, unsigned int duration_ms) {
     struct Slot {
         const char* name;
