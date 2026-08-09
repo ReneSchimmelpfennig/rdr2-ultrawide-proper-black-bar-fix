@@ -157,16 +157,38 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
         return false;
     }
 
-    const float current = read_float(target);
-    logger::info("FOV getter at module +0x{:X}, reads module +0x{:X} = {:.4f}",
-                 getter - module.base, target - module.base, current);
+    logger::info("FOV getter at module +0x{:X}, reads module +0x{:X}", getter - module.base,
+                 target - module.base);
 
-    if (!(current >= patterns::kFovSanityMin && current <= patterns::kFovSanityMax)) {
-        logger::info("  that is not a plausible field of view -- not installing");
-        logger::info("  (expected {:.0f}..{:.0f} degrees)", patterns::kFovSanityMin,
-                     patterns::kFovSanityMax);
-        return false;
+    // At plugin load the game has not rendered yet and the value is still 0.0,
+    // so checking it immediately rejects a perfectly good hook. Wait for the
+    // camera to come up first -- the observation run showed it takes about a
+    // second, but loading a save takes considerably longer.
+    constexpr DWORD kStepMs = 500;
+    constexpr DWORD kMaxWaitMs = 5 * 60 * 1000;
+
+    float current = read_float(target);
+    DWORD waited = 0;
+    bool announced = false;
+    while (!(current >= patterns::kFovSanityMin && current <= patterns::kFovSanityMax)) {
+        if (waited >= kMaxWaitMs) {
+            logger::info("  value never became plausible (last: {:.4f}) -- not installing",
+                         current);
+            logger::info("  (expected {:.0f}..{:.0f} degrees)", patterns::kFovSanityMin,
+                         patterns::kFovSanityMax);
+            return false;
+        }
+        if (!announced) {
+            logger::info("  value is {:.4f} -- waiting for the camera to come up", current);
+            announced = true;
+        }
+        Sleep(kStepMs);
+        waited += kStepMs;
+        current = read_float(target);
     }
+
+    logger::info("  reads {:.4f} degrees after {:.1f} s -- plausible, installing", current,
+                 static_cast<double>(waited) / 1000.0);
 
     g_target = reinterpret_cast<void*>(getter);
     if (const MH_STATUS status =
