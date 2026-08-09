@@ -65,6 +65,15 @@ void run_poke(unsigned int duration_ms);
 // The resolved address of the FOV master global, or 0 before install().
 [[nodiscard]] std::uintptr_t master_address();
 
+// How much of the computed correction to apply, in tangent space:
+//   1.0  the full k from the design notes (Hor+ assumption)
+//   0.0  no correction at all
+// Exists because it is not settled whether RDR2 widens horizontally or crops
+// vertically for cutscenes. The two models call for different strengths, and
+// the eye decides that faster than algebra. Clamped to [0, 1.5].
+void set_strength(float value);
+[[nodiscard]] float strength();
+
 // Logs every camera-state destination the detour has seen, with hit counts and
 // whether it is the master. Call after a run to find out which structures exist
 // -- only one of them can be the one the projection reads.

@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "bars.h"
 #include "dump.h"
 #include "fov.h"
 #include "framing.h"
@@ -21,6 +22,10 @@
 namespace {
 
 HMODULE g_self = nullptr;
+
+// Address of the `C6 05 ... FF` instruction itself. The letterbox patch needs
+// the instruction, the struct lookup needs what it points at.
+std::uintptr_t g_anchor_store = 0;
 
 // Refuse to do anything if we somehow got loaded into a different process --
 // every signature in patterns.h is specific to RDR2.exe.
@@ -95,6 +100,7 @@ std::uintptr_t scan_patterns(const mem::Region& module,
         return 0;
     }
 
+    g_anchor_store = letterbox.front();
     const std::uintptr_t flag = mem::resolve_rip_relative(
         letterbox.front(), patterns::kAnchorDispOffset, patterns::kAnchorLength);
     logger::info("    -> RIP target 0x{:016X} (module +0x{:X}){}", flag, flag - module.base,
@@ -259,6 +265,55 @@ void dump_image_once(const mem::Region& module, bool after_cutscene) {
     logger::info("  file offsets equal RVAs -- '+0x320545' in this log is 0x320545 in the file");
 }
 
+// Live controls, so the framing can be judged and dialled in during a single
+// cutscene instead of one game launch per guess.
+void run_hotkeys(unsigned int duration_ms) {
+    logger::info("");
+    logger::info("=== hotkeys ===");
+    logger::info("  F7   correction on / off");
+    logger::info("  F8   letterbox bars on / off");
+    logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("current: strength {:.2f}, bars {}", fov::strength(),
+                 bars::hidden() ? "hidden" : "visible");
+
+    const auto pressed = [](int vk, bool& was_down) {
+        const bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
+        const bool edge = down && !was_down;
+        was_down = down;
+        return edge;
+    };
+
+    bool f7 = false, f8 = false, f9 = false, f10 = false;
+    float saved_strength = fov::strength();
+
+    const DWORD started = GetTickCount();
+    while (GetTickCount() - started < duration_ms) {
+        if (pressed(VK_F7, f7)) {
+            if (fov::strength() > 0.0f) {
+                saved_strength = fov::strength();
+                fov::set_strength(0.0f);
+            } else {
+                fov::set_strength(saved_strength > 0.0f ? saved_strength : 1.0f);
+            }
+            logger::info("F7: correction {} (strength {:.2f})",
+                         fov::strength() > 0.0f ? "ON" : "OFF", fov::strength());
+        }
+        if (pressed(VK_F8, f8)) {
+            bars::set_hidden(!bars::hidden());
+        }
+        if (pressed(VK_F9, f9)) {
+            fov::set_strength(fov::strength() - 0.05f);
+            logger::info("F9: strength {:.2f}", fov::strength());
+        }
+        if (pressed(VK_F10, f10)) {
+            fov::set_strength(fov::strength() + 0.05f);
+            logger::info("F10: strength {:.2f}", fov::strength());
+        }
+        Sleep(30);
+    }
+    logger::info("hotkey window closed");
+}
+
 DWORD WINAPI worker(LPVOID) {
     logger::open(g_self);
     logger::info("log file: {}", logger::path().empty()
@@ -314,6 +369,11 @@ DWORD WINAPI worker(LPVOID) {
         if (fov_ready && fov_config.mode == fov::Mode::Poke) {
             constexpr unsigned int kPokeMs = 60 * 1000;
             fov::run_poke(kPokeMs);
+        } else if (fov_ready && fov_config.mode == fov::Mode::Corrected) {
+            bars::init(g_anchor_store);
+            bars::set_hidden(true);  // the framing cannot be judged with them on
+            constexpr unsigned int kHotkeyMs = 60 * 60 * 1000;
+            run_hotkeys(kHotkeyMs);
         } else if (fov_ready && (fov_config.mode == fov::Mode::Watch ||
                                  fov_config.mode == fov::Mode::TestWatch)) {
             // 90 s, because this pass needs the player to actively make the

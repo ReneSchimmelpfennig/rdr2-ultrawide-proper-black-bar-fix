@@ -51,6 +51,8 @@ target_compile_definitions(minhook PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 # ---------------------------------------------------------------------------
 add_library(${PROJECT_NAME} SHARED
     src/dllmain.cpp
+    src/bars.cpp
+    src/bars.h
     src/dump.cpp
     src/dump.h
     src/fov.cpp

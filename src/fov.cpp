@@ -4,6 +4,7 @@
 
 #include <MinHook.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cmath>
@@ -36,6 +37,8 @@ Config g_config;
 // few calls, purely as proof that it is being reached at all.
 std::atomic<int> g_calls{0};
 constexpr int kLoggedCalls = 8;
+
+std::atomic<float> g_strength{1.0f};
 
 // Periodic sampling while a cutscene is on screen, to make compounding visible.
 std::atomic<DWORD> g_last_sample{0};
@@ -116,7 +119,10 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
                                                GetSystemMetrics(SM_CYSCREEN));
             }
-            const double factor = framing::blended_factor(k, weight);
+            // Strength scales how far k moves away from 1, still in tangent
+            // space, so the blend with the letterbox weight stays intact.
+            const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
+            const double factor = framing::blended_factor(scaled, weight);
             result = static_cast<float>(framing::corrected_vfov_deg(original, factor));
 
             // ApplyCameraState is called for two dozen camera states, and some
@@ -130,8 +136,10 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             if (now - last >= 500 && g_samples.load() < kMaxSamples) {
                 g_last_sample.store(now, std::memory_order_relaxed);
                 g_samples.fetch_add(1);
-                logger::info("  cutscene: weight {:.3f}  k {:.5f}  blend {:.5f}  {:.3f} -> {:.3f}",
-                             weight, k, factor, original, result);
+                logger::info(
+                    "  cutscene: weight {:.3f}  k {:.5f}  strength {:.2f}  blend {:.5f}  "
+                    "{:.3f} -> {:.3f}",
+                    weight, k, g_strength.load(), factor, original, result);
             }
             break;
         }
@@ -457,6 +465,12 @@ void run_poke(unsigned int duration_ms) {
 }
 
 std::uintptr_t master_address() { return g_master_addr; }
+
+void set_strength(float value) {
+    g_strength.store((std::max)(0.0f, (std::min)(1.5f, value)));
+}
+
+float strength() { return g_strength.load(); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();
