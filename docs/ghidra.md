@@ -94,20 +94,78 @@ Damit ist auch dieser Weg vorerst erschöpft: Der gesamte Letterbox- und
 Cinematic-Zweig rechnet mit Aspects und Balkenhöhen, die Kamera-FOV wird
 woanders gesetzt.
 
-## Nächster Ansatz: Differenzsuche aus dem Plugin
+## Ergebnis der Differenzsuche (2026-08-09)
 
-Der deterministische Weg, ohne Ratearbeit. Das Plugin kann das, wofür sonst
-Cheat Engine benutzt wird — und zwar automatisiert und mit dem Letterbox-Gewicht
-als exaktem Zeitgeber:
+Gescannt wurde `.data`, 35,6 MB. Pass 1 im Gameplay fand 3860 Floats im
+Gradfenster und 11395 im Bogenmaßfenster. Nach Cutscene-Vergleich und
+Folgeframe blieben **je zwei** Kandidaten übrig, die sich pro Frame ändern:
 
-1. Abzug des `.data`-Bereichs, während `weight == 0` (Gameplay).
-2. Zweiter Abzug, während `weight == 1` (Cutscene steht).
-3. Diffen und filtern: 4-Byte-Floats, die sich geändert haben und in einem
-   plausiblen FOV-Bereich liegen — 10..90 wenn in Grad, 0.17..1.6 wenn in
-   Bogenmaß.
-4. Dritter Abzug einen Frame später, noch in der Cutscene: was sich **jeden
-   Frame** ändert, ist Kamerazustand, was konstant bleibt, ist Konfiguration.
+| Offset | Gameplay | Cutscene | +1 Frame | Fenster |
+|---|---|---|---|---|
+| `+0x39B06E4` | **45.000** | 48.840 | 26.991 | Grad |
+| `+0x3AE24B8` | **45.000** | 48.840 | 26.991 | Grad |
+| `+0x3A11250` | 1.000 | 0.598 | 0.567 | Bogenmaß |
+| `+0x3A11254` | 1.000 | 0.801 | 0.820 | Bogenmaß |
 
-Das Ergebnis ist eine Kandidatenliste von Moduloffsets. Die gehen zurück nach
-Ghidra: Xrefs auf so einen Offset zeigen direkt auf die Schreibstelle — und die
-ist genau das, was gesucht wird.
+Die beiden Gradkandidaten tragen identische Werte, sind also zwei Kopien
+desselben Wertes. Exakt `45.000` im Gameplay und Änderung in jedem Cutscene-
+Frame — das Profil einer Kamera-FOV.
+
+Die beiden Bogenmaßkandidaten liegen direkt nebeneinander und stehen im Gameplay
+beide auf `1.0`. Das sieht nach einem Skalierungspaar (x, y) aus, nicht nach
+einem Winkel. Vorerst zurückgestellt.
+
+### Woher die Gradkandidaten kommen
+
+`+0x3AE24B8` wird in einer Per-Frame-Funktion so gefüllt:
+
+```c
+DAT_7ff678b824b8 = *(float *)(index * 0x690 + 0x7ff678f61050);
+_DAT_7ff679fdf270 = DAT_7ff678b824b8;   // viermal hintereinander -> XMM-Broadcast
+```
+
+Also ein **Array von View-Strukturen mit Schrittweite `0x690`**, Basis um
+`+0x3EC0B00`. Der Wert wird viermal nebeneinander abgelegt, wie eine
+Shader-Konstante. `+0x3AE24B8` ist damit nur eine Kopie, nicht die Quelle.
+
+`+0x39B06E4` wird in einer anderen Per-Frame-Funktion aus einem Getter
+(`+0x173ED4`, `return DAT_7ff678f40be0`) geschrieben, direkt gefolgt von einem
+`fabs(neu - alt) < eps`-Vergleich. Das ist eine Änderungserkennung, der Wert
+selbst ist wieder nur ein Cache.
+
+### Warum die Quelle nicht in der Kandidatenliste steht
+
+`+0x3EA0BE0` liegt im gescannten Bereich, taucht aber nicht auf. Passt zum
+Befund: die Suche vergleicht **feste Adressen** über die Zeit. Ein Wert, der
+durch ein Array wandert oder indirekt beschrieben wird, fällt durch dieses
+Raster — die festen Kopien dagegen nicht. Genau die haben wir gefunden.
+
+Xrefs auf `+0x3EA0BE0` zeigen nur Leser, keinen Schreiber: der Wert wird über
+eine berechnete Adresse gesetzt, die Ghidra statisch nicht auflöst.
+
+### Offen: der Nachweis fehlt noch
+
+Dass `45.000` eine FOV in Grad ist, ist **plausibel, aber nicht bewiesen**.
+Belegt ist nur: der Wert steht im Gameplay konstant auf 45, ändert sich in
+Cutscenes jeden Frame, und wird als Shader-Konstante breitgestellt. Der
+eigentliche Beweis wäre, ihn zu verändern und die Bildwirkung zu sehen.
+
+## Nächster Schritt: den Kandidaten beweisen
+
+Alle bisherigen Indizien sind Korrelationen. Der Beweis ist eine Intervention:
+den Wert verändern und sehen, ob das Bild reagiert. Das ist ohnehin nötig, denn
+die FOV muss am Ende geschrieben werden.
+
+Vorgehen, gestaffelt vom Harmlosen zum Wirksamen:
+
+1. **Beobachten.** Die vier Kandidaten plus den Getter-Wert `+0x3EA0BE0` und das
+   Letterbox-Gewicht in einer Zeile pro Frame protokollieren. Zeigt, welche
+   Werte miteinander laufen und ob `+0x3EA0BE0` derselbe Wert ist.
+2. **FOV-Regler bewegen.** Ändert sich `45.000` mit der Einstellung im
+   Spielmenü, ist die Bedeutung geklärt, ohne irgendetwas zu schreiben.
+3. **Schreiben.** Einen festen Wert in die Kopie schreiben und schauen, ob das
+   Bild folgt. Tut es das nicht, ist die Kopie tot und nur die Quelle im
+   View-Array zählt — dann dort ansetzen.
+
+Erst wenn das steht, ist die Schreibstelle im Sinne des Designs gefunden und die
+Korrektur aus `framing.h` kann angewendet werden.
