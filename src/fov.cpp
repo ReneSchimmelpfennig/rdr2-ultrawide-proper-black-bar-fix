@@ -41,6 +41,7 @@ constexpr int kLoggedCalls = 8;
 
 std::atomic<float> g_strength{1.0f};
 std::atomic<bool> g_force{false};
+std::atomic<bool> g_flatten{false};
 
 // Periodic sampling while a cutscene is on screen, to make compounding visible.
 std::atomic<DWORD> g_last_sample{0};
@@ -319,6 +320,18 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
             const double factor = framing::blended_factor(scaled, weight);
             result = static_cast<float>(framing::corrected_vfov_deg(original, factor));
+
+            // Order matters: k was read from the bar height just above, so the
+            // heights may only be cleared afterwards. The camera update runs
+            // early in the frame, well before the 2D layer is laid out.
+            if (g_flatten.load(std::memory_order_relaxed)) {
+                const float zero = 0.0f;
+                std::memcpy(reinterpret_cast<void*>(g_bar_addr), &zero, sizeof(zero));
+                std::memcpy(
+                    reinterpret_cast<void*>(g_weight_addr + patterns::letterbox::kBarFraction235 -
+                                            patterns::letterbox::kWeight),
+                    &zero, sizeof(zero));
+            }
 
             break;
         }
@@ -660,6 +673,10 @@ float strength() { return g_strength.load(); }
 void set_force(bool on) { g_force.store(on); }
 
 bool forced() { return g_force.load(); }
+
+void set_flatten_bars(bool on) { g_flatten.store(on); }
+
+bool flattening_bars() { return g_flatten.load(); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();

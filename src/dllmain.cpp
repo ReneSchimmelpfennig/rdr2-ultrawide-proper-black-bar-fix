@@ -273,6 +273,7 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F7   correction on / off");
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("  F6   zero the bar heights too (test for the 2D layout)");
     logger::info("  F11  force the correction in gameplay (for still comparisons)");
     logger::info("  F12  set strength to exactly 1.00");
     logger::info("current: strength {:.2f}, bars {}", fov::strength(),
@@ -285,11 +286,15 @@ void run_hotkeys(unsigned int duration_ms) {
         return edge;
     };
 
-    bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
+    bool f6 = false, f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
     float saved_strength = fov::strength();
 
     const DWORD started = GetTickCount();
     while (GetTickCount() - started < duration_ms) {
+        if (pressed(VK_F6, f6)) {
+            fov::set_flatten_bars(!fov::flattening_bars());
+            logger::info("F6: bar heights zeroed {}", fov::flattening_bars() ? "ON" : "OFF");
+        }
         if (pressed(VK_F7, f7)) {
             if (fov::strength() > 0.0f) {
                 saved_strength = fov::strength();
