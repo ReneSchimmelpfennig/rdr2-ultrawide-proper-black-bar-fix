@@ -16,6 +16,7 @@
 #include "log.h"
 #include "mem.h"
 #include "patterns.h"
+#include "watchpoint.h"
 
 namespace {
 
@@ -313,6 +314,9 @@ DWORD WINAPI worker(LPVOID) {
         if (fov_ready && fov_config.mode == fov::Mode::Poke) {
             constexpr unsigned int kPokeMs = 60 * 1000;
             fov::run_poke(kPokeMs);
+        } else if (fov_ready && fov_config.mode == fov::Mode::Watch) {
+            constexpr unsigned int kWatchMs = 30 * 1000;
+            watchpoint::find_writers(fov::master_address(), module.base, kWatchMs);
         }
 
         // The differential search has already run and produced the candidates

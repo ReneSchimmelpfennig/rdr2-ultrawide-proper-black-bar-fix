@@ -258,6 +258,10 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
         logger::info("mode POKE -- not hooking; the global is overwritten directly");
         return true;
     }
+    if (g_config.mode == Mode::Watch) {
+        logger::info("mode WATCH -- not hooking; looking for whoever writes the global");
+        return true;
+    }
 
     g_target = reinterpret_cast<void*>(getter);
     if (const MH_STATUS status =
@@ -367,6 +371,8 @@ void run_poke(unsigned int duration_ms) {
 
     logger::info("=== POKE done, {} rounds ===", writes);
 }
+
+std::uintptr_t master_address() { return g_master_addr; }
 
 void uninstall() {
     if (g_target == nullptr) {

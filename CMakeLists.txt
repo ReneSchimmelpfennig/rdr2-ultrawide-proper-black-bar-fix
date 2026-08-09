@@ -57,6 +57,8 @@ add_library(${PROJECT_NAME} SHARED
     src/fov.h
     src/hunt.cpp
     src/hunt.h
+    src/watchpoint.cpp
+    src/watchpoint.h
     src/log.cpp
     src/log.h
     src/mem.cpp

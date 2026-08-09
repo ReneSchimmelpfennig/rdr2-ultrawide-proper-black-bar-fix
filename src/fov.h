@@ -13,14 +13,15 @@ enum class Mode {
     Off,        // hook installed, value passed through unchanged
     Test,       // unconditional fixed factor, so the effect is unmissable
     Corrected,  // the real thing: k in tangent space, weighted by the letterbox
-    Poke        // no hook: overwrite the master global directly, see run_poke()
+    Poke,       // no hook: overwrite the master global directly, see run_poke()
+    Watch       // no hook: find who writes the master, see watchpoint.h
 };
 
 // Reading fov.txt from inside the game process fails with ERROR_FILE_NOT_FOUND
 // for a file that provably exists, while creating the log in the same directory
 // works. Until that is understood, the mode a build ships with is compiled in
 // here, so a run does not depend on a file we cannot read.
-inline constexpr Mode kCompiledDefaultMode = Mode::Poke;
+inline constexpr Mode kCompiledDefaultMode = Mode::Watch;
 inline constexpr float kCompiledPokeValue = 25.0f;
 
 struct Config {
@@ -59,5 +60,8 @@ void uninstall();
 // lose others, which shows up as flicker -- and flicker is a perfectly good
 // answer to "does this address matter at all".
 void run_poke(unsigned int duration_ms);
+
+// The resolved address of the FOV master global, or 0 before install().
+[[nodiscard]] std::uintptr_t master_address();
 
 }  // namespace fov
