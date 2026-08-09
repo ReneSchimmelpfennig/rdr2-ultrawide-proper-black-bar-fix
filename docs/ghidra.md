@@ -150,22 +150,72 @@ Belegt ist nur: der Wert steht im Gameplay konstant auf 45, ändert sich in
 Cutscenes jeden Frame, und wird als Shader-Konstante breitgestellt. Der
 eigentliche Beweis wäre, ihn zu verändern und die Bildwirkung zu sehen.
 
-## Nächster Schritt: den Kandidaten beweisen
+## BEWIESEN: die FOV ist gefunden (2026-08-09)
 
-Alle bisherigen Indizien sind Korrelationen. Der Beweis ist eine Intervention:
-den Wert verändern und sehen, ob das Bild reagiert. Das ist ohnehin nötig, denn
-die FOV muss am Ende geschrieben werden.
+Kein FOV-Regler im Spielmenü, deshalb der Test mit dem **Fernglas** — kontinuierlicher
+Zoom, also ein durchgehender FOV-Verlauf statt diskreter Stufen. Das Ergebnis ist
+eindeutig:
 
-Vorgehen, gestaffelt vom Harmlosen zum Wirksamen:
+| Zustand | Wert |
+|---|---|
+| Normales Gameplay | **51,282°** (89 von 225 Messzeilen) |
+| Leicht verändert (Bewegung, Reiten) | 52,183° |
+| Fernglas angesetzt | 22,620° |
+| Fernglas voll herangezoomt | **8,578°** |
+| Maximum über den ganzen Lauf | 63,589° |
 
-1. **Beobachten.** Die vier Kandidaten plus den Getter-Wert `+0x3EA0BE0` und das
-   Letterbox-Gewicht in einer Zeile pro Frame protokollieren. Zeigt, welche
-   Werte miteinander laufen und ob `+0x3EA0BE0` derselbe Wert ist.
-2. **FOV-Regler bewegen.** Ändert sich `45.000` mit der Einstellung im
-   Spielmenü, ist die Bedeutung geklärt, ohne irgendetwas zu schreiben.
-3. **Schreiben.** Einen festen Wert in die Kopie schreiben und schauen, ob das
-   Bild folgt. Tut es das nicht, ist die Kopie tot und nur die Quelle im
-   View-Array zählt — dann dort ansetzen.
+Ein Wert, der beim Heranzoomen auf ein Sechstel fällt, ist ein Blickwinkel.
+Damit ist die Frage beantwortet, ohne dass etwas geschrieben werden musste.
 
-Erst wenn das steht, ist die Schreibstelle im Sinne des Designs gefunden und die
-Korrektur aus `framing.h` kann angewendet werden.
+### Die Rangfolge der drei Adressen
+
+`+0x3EA0BE0` ist der **Master**. Die beiden Kopien folgen ihm; in 10 von 225
+Zeilen hinken sie genau einen Frame hinterher, sonst sind alle drei identisch.
+Beim Start stand der Master noch auf `0.0`, während die Kopien schon `45.0`
+trugen — die 45 war also ein Initialwert aus dem Menü, nicht die Gameplay-FOV.
+
+| Offset | Rolle |
+|---|---|
+| `+0x3EA0BE0` | **Master**, von `GetFov()` (`+0x173ED4`) zurückgegeben |
+| `+0x39B06E4` | Kopie für die Änderungserkennung |
+| `+0x3AE24B8` | Kopie aus dem View-Array, als Shader-Konstante breitgestellt |
+
+### Es ist die vertikale FOV
+
+Nicht direkt gemessen, aber die Gegenrechnung lässt nur eine Deutung zu:
+
+| Annahme | Folge bei 3440x1440 |
+|---|---|
+| 51,282° ist **vertikal** | hFOV = 97,8° — plausibel |
+| 51,282° ist horizontal | vFOV = 22,7° — unmöglich eng |
+
+Das deckt sich mit der Designnotiz: RDR2 ist Hor+, die vFOV bleibt konstant und
+die hFOV wächst mit dem Seitenverhältnis. Genau diese Größe braucht
+`framing::corrected_vfov_deg()`, und zwar in **Grad** — die Funktion nimmt Grad,
+passt also direkt.
+
+### Erledigt: die Bogenmaß-Kandidaten
+
+`+0x3A11250` und `+0x3A11254` bewegen sich unabhängig von der FOV. Ihr Betrag
+`sqrt(x²+y²)` schwankt zwischen 0,35 und 1,0 — ein Richtungsvektor ist
+plausibel, aber nicht belegt. Für den Fix irrelevant, nicht weiter verfolgt.
+
+## Nächster Schritt: die Schreibstelle
+
+Der **Wert** ist gefunden, die **Schreibstelle** noch nicht. Ghidra sieht auf
+`+0x3EA0BE0` nur zwei Leser und keinen Schreiber — geschrieben wird über eine
+berechnete Adresse, die statisch nicht auflösbar ist.
+
+Zu klären, in dieser Reihenfolge:
+
+1. Den zweiten Leser (`+0xF98FE8`) dekompilieren. Der Getter `+0x173ED4` ist der
+   eine, dieser der andere — zusammen decken sie ab, wer den Master überhaupt
+   benutzt.
+2. Das View-Array aufklären: `*(index * 0x690 + 0x7ff678f61050)`. Wer dort
+   hineinschreibt, committet die Kamera-FOV pro Frame.
+3. Danach die Entscheidung, wo der Hook sitzt. Kandidaten: der Getter (klein und
+   sauber zu hooken, deckt aber nur einen der beiden Leser ab) oder die
+   Schreibstelle selbst (deckt alles ab, ist aber ein größerer Eingriff).
+
+Erst wenn das steht, greift `framing::corrected_vfov_deg()` mit dem
+Letterbox-Gewicht als Blendfaktor — beides liegt fertig vor.
