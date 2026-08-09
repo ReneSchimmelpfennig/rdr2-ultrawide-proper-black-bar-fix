@@ -159,6 +159,9 @@ bool is_our_own_output(float value) { return carries_tag(value); }
 // copy and the tag is enough, which the logs confirm.
 std::atomic<float> g_corrected_at_weight{-1.0f};
 
+// Which structure was last seen carrying the value that got rendered.
+std::atomic<std::size_t> g_render_slot{static_cast<std::size_t>(-1)};
+
 std::size_t record_destination(std::uintptr_t dst) {
     const std::size_t known = g_dst_known.load(std::memory_order_acquire);
     for (std::size_t i = 0; i < known; ++i) {
@@ -205,8 +208,19 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     if (slot != kNoSlot) {
         const float shader = read_float(g_shader_fov_addr);
         const float previous = g_dst_last_final[slot].load(std::memory_order_relaxed);
-        is_rendered = previous != 0.0f &&
-                      std::fabs(previous - shader) <= std::fabs(shader) * kShaderMatch;
+        const bool matches = previous != 0.0f &&
+                             std::fabs(previous - shader) <= std::fabs(shader) * kShaderMatch;
+
+        // Sticky, because the game cuts between cameras. At a cut the shader
+        // constant jumps and for one frame nothing matches it -- measured as
+        // four frames out of 489, each landing on a cut, and each visible as a
+        // step of twice the usual size. Remembering which structure was the
+        // rendered one carries the correction across that gap; it is handed on
+        // as soon as another structure genuinely matches.
+        if (matches) {
+            g_render_slot.store(slot, std::memory_order_relaxed);
+        }
+        is_rendered = matches || g_render_slot.load(std::memory_order_relaxed) == slot;
 
         // Bookkeeping for the report only.
         g_dst_shader_samples[slot].fetch_add(1, std::memory_order_relaxed);
