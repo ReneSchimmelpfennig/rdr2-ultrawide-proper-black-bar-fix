@@ -19,9 +19,10 @@
 namespace fov {
 namespace {
 
-using GetFovFn = float (*)();
+// void ApplyCameraState(CameraState* dst, const CameraState* src)
+using ApplyFn = void (*)(std::uintptr_t, std::uintptr_t);
 
-GetFovFn g_original = nullptr;
+ApplyFn g_original = nullptr;
 void* g_target = nullptr;
 
 std::uintptr_t g_weight_addr = 0;
@@ -42,15 +43,28 @@ float read_float(std::uintptr_t addr) {
     return value;
 }
 
-float detour() {
-    const float original = g_original();
+void detour(std::uintptr_t dst, std::uintptr_t src) {
+    g_original(dst, src);
 
+    // The game applies camera state to several structures; only the one whose
+    // FOV field is the master drives the projection. Comparing against the
+    // address we already resolved and validated avoids a second hardcoded
+    // offset for the structure base.
+    const std::uintptr_t fov_addr =
+        dst + static_cast<std::uintptr_t>(patterns::kCameraStateFov);
+    if (fov_addr != g_master_addr) {
+        return;
+    }
+
+    const float original = read_float(fov_addr);
     float result = original;
     float weight = 0.0f;
 
     switch (g_config.mode) {
         case Mode::Off:
-            break;
+        case Mode::Poke:
+        case Mode::Watch:
+            return;
 
         case Mode::Test:
             result = original * g_config.test_factor;
@@ -58,30 +72,31 @@ float detour() {
 
         case Mode::Corrected: {
             weight = read_float(g_weight_addr);
-            if (weight > 0.0f) {
-                // k straight from the game's own bar height: it already divides
-                // by the true backbuffer aspect, so this is correct in windowed
-                // mode and at non-native resolutions without asking Windows.
-                const float bar = read_float(g_bar_addr);
-                double k = framing::correction_factor_from_bars(bar, weight);
-                if (!(k > 0.0 && k < 1.0)) {
-                    // Bars not usable this frame -- fall back to the display.
-                    k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
-                                                   GetSystemMetrics(SM_CYSCREEN));
-                }
-                const double factor = framing::blended_factor(k, weight);
-                result = static_cast<float>(framing::corrected_vfov_deg(original, factor));
+            if (weight <= 0.0f) {
+                return;  // gameplay: leave the camera exactly as authored
             }
+            // k straight from the game's own bar height: it already divides by
+            // the true backbuffer aspect, so this is correct in windowed mode
+            // and at non-native resolutions without asking Windows.
+            const float bar = read_float(g_bar_addr);
+            double k = framing::correction_factor_from_bars(bar, weight);
+            if (!(k > 0.0 && k < 1.0)) {
+                k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
+                                               GetSystemMetrics(SM_CYSCREEN));
+            }
+            const double factor = framing::blended_factor(k, weight);
+            result = static_cast<float>(framing::corrected_vfov_deg(original, factor));
             break;
         }
     }
 
+    std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
+
     const int call = g_calls.fetch_add(1);
     if (call < kLoggedCalls) {
-        logger::info("  GetFov call {}: {:.4f} -> {:.4f}   (weight {:.4f})", call + 1, original,
-                     result, weight);
+        logger::info("  ApplyCameraState {}: {:.4f} -> {:.4f}   (weight {:.4f})", call + 1,
+                     original, result, weight);
     }
-    return result;
 }
 
 }  // namespace
@@ -263,7 +278,25 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
         return true;
     }
 
-    g_target = reinterpret_cast<void*>(getter);
+    // The getter only told us where the master lives. What actually has to be
+    // hooked is the function that writes it, found with the watchpoint.
+    const auto apply_pattern = mem::parse_pattern(patterns::kCameraApply);
+    if (!apply_pattern) {
+        logger::info("ApplyCameraState signature is malformed -- not installing");
+        return false;
+    }
+    std::vector<std::uintptr_t> apply_hits;
+    for (const auto& [name, region] : sections) {
+        mem::find_all(region, *apply_pattern, apply_hits);
+    }
+    if (apply_hits.size() != 1) {
+        logger::info("ApplyCameraState matched {} time(s), need exactly 1 -- not installing",
+                     apply_hits.size());
+        return false;
+    }
+    logger::info("ApplyCameraState at module +0x{:X}", apply_hits.front() - module.base);
+
+    g_target = reinterpret_cast<void*>(apply_hits.front());
     if (const MH_STATUS status =
             MH_CreateHook(g_target, reinterpret_cast<void*>(&detour),
                           reinterpret_cast<void**>(&g_original));

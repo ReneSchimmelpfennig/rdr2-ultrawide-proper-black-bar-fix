@@ -84,6 +84,25 @@ inline constexpr std::size_t kFovMovssLength = 8;
 inline constexpr float kFovSanityMin = 1.0f;
 inline constexpr float kFovSanityMax = 170.0f;
 
+// void ApplyCameraState(CameraState* dst, const CameraState* src)
+//
+// Found with a hardware watchpoint on the FOV master: exactly one instruction
+// writes it, `movss [rbx+0x60], xmm0`, and it lives here. Ghidra could not find
+// it because the store goes through a register, not a RIP-relative address.
+//
+// The function copies a camera state field by field, clamping as it goes. FOV
+// is at +0x60 of both structures. Hooking it and correcting after the original
+// has run puts our value in place exactly when the game commits the camera --
+// early enough for the projection, which reads it immediately afterwards.
+//
+// Unlike kFovGetter this signature is entirely inside the function it names,
+// so it does not borrow uniqueness from a neighbour.
+inline constexpr std::string_view kCameraApply =
+    "48 89 5C 24 08 57 48 83 EC 20 F3 0F 6F 42 30 41";
+
+// Offset of the field of view within the camera state.
+inline constexpr std::ptrdiff_t kCameraStateFov = 0x60;
+
 // Candidates from the differential search, see docs/ghidra.md.
 //
 // WARNING: these are raw module offsets for RDR2.exe 1.0.1491.50, not AOB

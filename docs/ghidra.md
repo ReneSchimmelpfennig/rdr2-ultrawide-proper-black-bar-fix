@@ -307,7 +307,61 @@ Damit ist belegt, was das Projekt von Anfang an annahm: **ein statischer
 Datei-Tausch kann das Cutscene-Framing nicht korrigieren.** Der Laufzeiteingriff
 ist nicht Bequemlichkeit, sondern notwendig.
 
-## Nächster Schritt: die Schreibstelle
+## GEFUNDEN: die Schreibstelle (2026-08-09)
+
+Statische Analyse konnte sie nicht liefern, ein Hardware-Watchpoint schon.
+`watchpoint::find_writers()` setzte DR0 auf 19 Threads und protokollierte
+30 Sekunden lang:
+
+```
+armed on 19 thread(s)
+watchpoint: 347 hit(s) recorded
+  distinct writer(s): 1
+    module +0x17007B     347 hit(s)
+```
+
+**Genau ein Schreiber.** Die Instruktion davor ist `F3 0F 11 43 60` =
+`movss [rbx+0x60], xmm0` — ein Store über ein *Register*. Genau deshalb fand
+Ghidra keine Referenz auf `+0x3EA0BE0`: es gibt keine RIP-relative.
+
+Daraus folgt die Struktur: `rbx = +0x3EA0B80`, die FOV liegt bei **`+0x60`**
+darin. Unmittelbar davor steht `minss xmm0, xmm2`, der Wert wird also geklemmt.
+
+### Die Funktion
+
+`+0x170028`, von uns `ApplyCameraState(dst, src)` genannt. Sie kopiert einen
+Kamerazustand Feld für Feld und klemmt dabei:
+
+```c
+fVar3 = *(float *)(src + 0x60);          // Quell-FOV
+... Klemmung gegen 1.0 und eine Obergrenze ...
+*(float *)(dst + 0x60) = fVar4;          // unser Store
+```
+
+Danach folgen Dutzende weiterer Felder — Position, Rotation, DOF-Parameter. Es
+ist die Übernahmefunktion der Kamera, und sie läuft genau dann, wenn das Spiel
+den Kamerazustand festschreibt: früh genug für die Projektion, die ihn
+unmittelbar danach liest.
+
+### Signatur
+
+```
+48 89 5C 24 08 57 48 83 EC 20 F3 0F 6F 42 30 41
+```
+
+Bei 16 Bytes eindeutig, und **vollständig im Prolog der Zielfunktion** — anders
+als `kFovGetter`, der seine Eindeutigkeit vom Ende einer fremden Funktion borgt.
+Entsprechend robuster gegenüber Spielpatches.
+
+### Warum der Hook nach dem Original läuft
+
+Der Detour ruft erst das Original und korrigiert dann `dst + 0x60`. Damit
+gewinnt unser Wert gegen die Klemmung des Spiels, und er steht, bevor die
+Projektion ihn liest. Korrigiert wird nur, wenn `dst + 0x60` genau die
+Masteradresse ist, die über `kFovGetter` aufgelöst und plausibilisiert wurde —
+so kommt kein zweiter fest verdrahteter Offset ins Spiel.
+
+## Historisch: die Suche nach der Schreibstelle
 
 Der **Wert** ist gefunden, die **Schreibstelle** noch nicht. Ghidra sieht auf
 `+0x3EA0BE0` nur zwei Leser und keinen Schreiber — geschrieben wird über eine
