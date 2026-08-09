@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -128,6 +129,9 @@ void scan_until_found(const mem::Region& module) {
 
 DWORD WINAPI worker(LPVOID) {
     logger::open(g_self);
+    logger::info("log file: {}", logger::path().empty()
+                                     ? std::string("<none writable, debugger output only>")
+                                     : std::filesystem::path(logger::path()).string());
 
     if (!host_is_rdr2()) {
         logger::info("host process is not RDR2.exe -- doing nothing");
@@ -163,6 +167,10 @@ DWORD WINAPI worker(LPVOID) {
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
+        // First thing, before anything can fail: proof of load that survives an
+        // unwritable game folder, a missing thread, or a crash further down.
+        OutputDebugStringA("[RDR2UltrawideCutsceneFix] DLL_PROCESS_ATTACH\n");
+
         g_self = module;
         DisableThreadLibraryCalls(module);
         // DllMain runs under the loader lock; everything real happens on our

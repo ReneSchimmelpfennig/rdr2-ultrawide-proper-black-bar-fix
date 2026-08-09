@@ -9,11 +9,14 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <numbers>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "../src/framing.h"
+#include "../src/log.h"
 #include "../src/mem.h"
 
 namespace {
@@ -211,6 +214,38 @@ void test_framing() {
     check_near(framing::blended_factor(k, -1.0), 1.0, 1e-12, "negative input is clamped");
 }
 
+void test_logger_fallback() {
+    std::puts("logger fallback");
+
+    // A module handle that was never loaded makes GetModuleFileNameW fail, so
+    // the "beside the .asi" candidate drops out and the fallback has to carry
+    // it. That is exactly the situation in the game folder, which grants the
+    // user ReadAndExecute only: existing files may be written, new ones may not
+    // be created.
+    const auto bogus = reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(0xDEAD0000));
+
+    check(logger::open(bogus), "opens a log even when the module path is unusable");
+    const std::wstring path = logger::path();
+    check(!path.empty(), "reports where it ended up");
+
+    logger::info("self-test wrote this line");
+    logger::close();
+
+    if (!path.empty()) {
+        std::printf("        fell back to: %s\n", std::filesystem::path(path).string().c_str());
+        check(std::filesystem::exists(path), "the fallback log really exists on disk");
+        check(std::filesystem::file_size(path) > 0, "and it has content");
+
+        wchar_t local[MAX_PATH]{};
+        const DWORD written = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+        check(written > 0 && written < MAX_PATH && path.find(local) == 0,
+              "the fallback is under %LOCALAPPDATA%");
+
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -220,6 +255,7 @@ int main() {
     test_rip_relative();
     test_module_introspection();
     test_framing();
+    test_logger_fallback();
 
     std::printf("\n%s\n", g_failures == 0 ? "all checks passed" : "THERE WERE FAILURES");
     return g_failures == 0 ? 0 : 1;
