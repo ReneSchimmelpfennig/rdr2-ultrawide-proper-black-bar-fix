@@ -192,24 +192,36 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     const std::size_t slot = record_destination(dst);
     const float original = read_float(fov_addr);
 
-    // Score this destination against the shader constant before deciding
-    // anything. The comparison uses the value it carried on the previous call,
-    // which is what the shader constant reflects one frame later.
+    // Is *this* destination the one being rendered right now?
+    //
+    // Asked per call, not accumulated over the session. Which camera gets
+    // rendered changes -- gameplay uses one, a cutscene another, a transition
+    // the blend of two -- so a hit rate over the whole run averages away
+    // precisely the thing it is supposed to detect. The instantaneous test also
+    // repairs itself: a camera that stops being rendered simply stops being
+    // corrected, and the game overwrites it from its authored source anyway.
     bool is_rendered = false;
     if (slot != kNoSlot) {
         const float shader = read_float(g_shader_fov_addr);
-        const unsigned samples = g_dst_shader_samples[slot].load(std::memory_order_relaxed);
-        if (samples > 0) {
-            const float previous = g_dst_last_final[slot].load(std::memory_order_relaxed);
-            if (std::fabs(previous - shader) <= std::fabs(shader) * kShaderMatch) {
-                g_dst_shader_hits[slot].fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-        g_dst_shader_samples[slot].fetch_add(1, std::memory_order_relaxed);
+        const float previous = g_dst_last_final[slot].load(std::memory_order_relaxed);
+        is_rendered = previous != 0.0f &&
+                      std::fabs(previous - shader) <= std::fabs(shader) * kShaderMatch;
 
-        const unsigned hits = g_dst_shader_hits[slot].load(std::memory_order_relaxed);
-        is_rendered = samples >= kMinSamples && hits * 10 >= samples * 6;
+        // Bookkeeping for the report only.
+        g_dst_shader_samples[slot].fetch_add(1, std::memory_order_relaxed);
+        if (is_rendered) {
+            g_dst_shader_hits[slot].fetch_add(1, std::memory_order_relaxed);
+        }
     }
+
+    // Every path from here on must leave the current value behind, or the test
+    // above goes stale. The previous version returned early in gameplay without
+    // storing, which broke the detection for exactly the cameras it needed.
+    const auto finish = [&](float final_value) {
+        if (slot != kNoSlot) {
+            g_dst_last_final[slot].store(final_value, std::memory_order_relaxed);
+        }
+    };
 
     // Everything that is not the rendered camera stays exactly as authored. It
     // may well be a source for the blend, and the blend has to work on authored
@@ -218,9 +230,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // is_our_own_output stays as a safety net for the case of two rendered
     // cameras feeding each other.
     if (!is_rendered || is_our_own_output(original)) {
-        if (slot != kNoSlot) {
-            g_dst_last_final[slot].store(original, std::memory_order_relaxed);
-        }
+        finish(original);
         return;
     }
 
@@ -231,6 +241,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         case Mode::Off:
         case Mode::Poke:
         case Mode::Watch:
+            finish(original);
             return;
 
         case Mode::Test:
@@ -244,7 +255,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 weight = 1.0f;  // measurement aid: pretend the bars are fully in
             }
             if (weight <= 0.0f) {
-                return;  // gameplay: leave the camera exactly as authored
+                finish(original);  // gameplay: leave the camera exactly as authored
+                return;
             }
             // k straight from the game's own bar height: it already divides by
             // the true backbuffer aspect, so this is correct in windowed mode
@@ -299,9 +311,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     result = tag(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
     remember_output(result);
-    if (slot != kNoSlot) {
-        g_dst_last_final[slot].store(result, std::memory_order_relaxed);
-    }
+    finish(result);
 
     const int call = g_calls.fetch_add(1);
     if (call < kLoggedCalls) {
