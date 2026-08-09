@@ -59,6 +59,37 @@ in der Datei und wird erst zur Laufzeit entpackt.
    damit eine Signatur über eine Schutzgrenze hinweg trotzdem gefunden wird.
    Der Selbsttest deckt genau diesen Fall ab (`test_unreadable_pages`).
 
+## Konsequenz für die statische Analyse: der Dumper
+
+Ghidra an der Datei auf der Platte anzusetzen ist sinnlos — an `+0x320545`
+steht dort Müll. Deshalb schreibt das Plugin das entpackte Image selbst heraus
+(`src/dump.*`), aus dem Prozess, in dem es ohnehin läuft. Kein Debugger, damit
+auch kein Risiko, Arxans Anti-Debug zu wecken.
+
+**Wann:** einmal, nachdem eine vollständige Cutscene beobachtet wurde. Der
+Zeitpunkt ist Absicht — so ist der Cutscene-Code garantiert entschlüsselt und
+resident. Existiert die Datei schon, wird sie nicht neu geschrieben; zum
+Erzwingen einfach löschen.
+
+**Wohin:** `%LOCALAPPDATA%\RDR2UltrawideCutsceneFix\RDR2.dump.exe`, rund 115 MB.
+Gehört nicht ins Repo — `dumps/` und `*.exe` sind in `.gitignore`.
+
+**Was der Dump kann:** Er ist *realigned*. Jeder Sektionsheader bekommt
+`PointerToRawData = VirtualAddress`, und `FileAlignment` wird auf
+`SectionAlignment` angehoben. Dateioffsets sind damit identisch mit RVAs: was
+das Log als `module +0x320545` meldet, liegt im Dump an Offset `0x320545`. Der
+Selbsttest prüft genau diese Eigenschaft, indem er eine eigene Funktion über
+beide Wege vergleicht.
+
+**Was der Dump nicht kann:** Die Importtabelle wird *nicht* rekonstruiert. Die
+IAT enthält aufgelöste Adressen aus dem dumpenden Prozess, importierte Aufrufe
+erscheinen in Ghidra also als nackte Zeiger statt als benannte Funktionen. Für
+unseren Zweck — Code lesen und Datenreferenzen verfolgen — reicht das. Wer
+benannte Imports braucht, müsste ImpRec-artig nacharbeiten.
+
+Unlesbare Seiten (die Arxan-Löcher) werden als Nullen geschrieben und im Log
+gezählt. Eine hohe Zahl dort ist das Warnsignal, dass der Dump lückenhaft ist.
+
 ## Offene Frage
 
 Ob Arxan zusätzlich Integritätsprüfungen über den entpackten Code laufen lässt.

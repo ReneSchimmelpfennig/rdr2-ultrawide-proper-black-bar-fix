@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "dump.h"
 #include "framing.h"
 #include "log.h"
 #include "mem.h"
@@ -152,11 +153,15 @@ float read_float(std::uintptr_t addr) {
 // or written. The layout it assumes is in patterns::letterbox and was measured,
 // not guessed; logging it in decoded form means a game patch that moves a field
 // shows up as nonsense here instead of silently feeding a wrong FOV.
-void monitor_letterbox_state(std::uintptr_t anchor) {
-    constexpr DWORD kPollMs = 16;                  // ~ once per frame
-    constexpr DWORD kDurationMs = 15 * 60 * 1000;  // stop after 15 minutes
-    constexpr int kMaxLines = 1500;                // keep the log finite
+// Returns true once a complete cutscene has been observed (weight up and back
+// down), false on timeout. The caller uses that to dump the image only after
+// the cutscene code paths have actually executed.
+bool monitor_letterbox_state(std::uintptr_t anchor, DWORD duration_ms) {
+    constexpr DWORD kPollMs = 16;    // ~ once per frame
+    constexpr int kMaxLines = 1500;  // keep the log finite
     constexpr float kEpsilon = 1e-4f;
+    constexpr float kRisen = 0.5f;
+    constexpr float kSettled = 0.01f;
 
     const std::uintptr_t weight_addr = anchor + patterns::letterbox::kWeight;
     const std::uintptr_t bar235_addr = anchor + patterns::letterbox::kBarFraction235;
@@ -164,29 +169,38 @@ void monitor_letterbox_state(std::uintptr_t anchor) {
 
     if (!is_readable(weight_addr, patterns::letterbox::kStride)) {
         logger::info("letterbox struct is not readable -- giving up on monitoring");
-        return;
+        return false;
     }
 
     logger::info("");
-    logger::info("watching the letterbox struct for {} minutes, logging every change.",
-                 kDurationMs / 60000);
-    logger::info("go into a cutscene and back out.");
+    logger::info("watching the letterbox struct for up to {} minutes.", duration_ms / 60000);
+    logger::info("go into a cutscene and back out -- the image is dumped once that happened,");
+    logger::info("so that the cutscene code is decrypted and resident when it is.");
 
     float previous = -1.0f;
     int lines = 0;
+    bool risen = false;
 
     const DWORD started = GetTickCount();
-    while (GetTickCount() - started < kDurationMs) {
+    while (GetTickCount() - started < duration_ms) {
         if (!is_readable(weight_addr, patterns::letterbox::kStride)) {
             Sleep(kPollMs);
             continue;
         }
 
         const float weight = read_float(weight_addr);
+
+        if (weight > kRisen) {
+            risen = true;
+        } else if (risen && weight < kSettled) {
+            logger::info("a full cutscene was observed -- ending the watch");
+            return true;
+        }
+
         if (std::fabs(weight - previous) > kEpsilon) {
             if (lines >= kMaxLines) {
                 logger::info("line budget exhausted -- stopping the watch");
-                return;
+                return risen;
             }
 
             const float bar235 = read_float(bar235_addr);
@@ -202,8 +216,44 @@ void monitor_letterbox_state(std::uintptr_t anchor) {
         Sleep(kPollMs);
     }
 
-    logger::info("watch finished after {} minutes, {} change(s) logged", kDurationMs / 60000,
+    logger::info("watch timed out after {} minutes, {} change(s) logged", duration_ms / 60000,
                  lines);
+    return risen;
+}
+
+// Writes the decrypted image next to the log, once. Skipped if it is already
+// there -- it is 115 MB and there is no reason to rewrite it every launch.
+// Delete the file to force a fresh dump.
+void dump_image_once(const mem::Region& module, bool after_cutscene) {
+    std::filesystem::path out = logger::path();
+    if (out.empty()) {
+        logger::info("no log location -- skipping the image dump");
+        return;
+    }
+    out.replace_filename(L"RDR2.dump.exe");
+
+    std::error_code ec;
+    if (std::filesystem::exists(out, ec)) {
+        logger::info("image dump already exists, skipping: {}", out.string());
+        logger::info("  delete it to force a fresh dump on the next launch");
+        return;
+    }
+
+    if (!after_cutscene) {
+        logger::info("NOTE: no cutscene was observed before dumping. Cutscene code may still");
+        logger::info("      be encrypted in this dump. Delete it and replay to get a better one.");
+    }
+
+    logger::info("dumping the decrypted image to {} ...", out.string());
+    const dump::Result result = dump::write_image(module, out);
+
+    if (!result.ok) {
+        logger::info("image dump FAILED after {} bytes", result.bytes_written);
+        return;
+    }
+    logger::info("image dump done: {} bytes in {:.1f} s, {} byte(s) were unreadable and zeroed",
+                 result.bytes_written, result.seconds, result.unreadable_bytes);
+    logger::info("  file offsets equal RVAs -- '+0x320545' in this log is 0x320545 in the file");
 }
 
 DWORD WINAPI worker(LPVOID) {
@@ -236,7 +286,9 @@ DWORD WINAPI worker(LPVOID) {
                  module.size, static_cast<double>(module.size) / (1024.0 * 1024.0));
 
     if (const std::uintptr_t anchor = scan_until_found(module); anchor != 0) {
-        monitor_letterbox_state(anchor);
+        constexpr DWORD kWatchMs = 10 * 60 * 1000;
+        const bool saw_cutscene = monitor_letterbox_state(anchor, kWatchMs);
+        dump_image_once(module, saw_cutscene);
     }
 
     logger::info("skeleton done -- no hooks installed yet");

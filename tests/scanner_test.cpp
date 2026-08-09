@@ -10,11 +10,13 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <numbers>
 #include <string>
 #include <system_error>
 #include <vector>
 
+#include "../src/dump.h"
 #include "../src/framing.h"
 #include "../src/log.h"
 #include "../src/mem.h"
@@ -258,6 +260,63 @@ void test_logger_fallback() {
     }
 }
 
+void test_image_dump() {
+    std::puts("image dump");
+
+    const mem::Region module = mem::main_module();
+    const auto out = std::filesystem::temp_directory_path() / "scanner_test_selfdump.exe";
+
+    std::error_code ec;
+    std::filesystem::remove(out, ec);
+
+    const dump::Result result = dump::write_image(module, out);
+    check(result.ok, "dumps its own image");
+    if (!result.ok) {
+        return;
+    }
+    std::printf("        %zu bytes in %.2f s, %zu unreadable\n", result.bytes_written,
+                result.seconds, result.unreadable_bytes);
+
+    check(result.bytes_written == module.size, "the dump covers the whole image");
+    check(std::filesystem::file_size(out, ec) == module.size, "file size matches SizeOfImage");
+
+    // Re-read it and verify it is a PE whose file offsets equal RVAs.
+    std::vector<std::uint8_t> file(module.size);
+    {
+        std::ifstream in(out, std::ios::binary);
+        check(static_cast<bool>(in), "the dump can be reopened");
+        in.read(reinterpret_cast<char*>(file.data()), static_cast<std::streamsize>(module.size));
+    }
+
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(file.data());
+    check(dos->e_magic == IMAGE_DOS_SIGNATURE, "the dump starts with MZ");
+
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(file.data() + dos->e_lfanew);
+    check(nt->Signature == IMAGE_NT_SIGNATURE, "PE signature survived");
+    check(nt->OptionalHeader.SizeOfImage == module.size, "SizeOfImage is unchanged");
+    check(nt->OptionalHeader.FileAlignment == nt->OptionalHeader.SectionAlignment,
+          "FileAlignment was raised to SectionAlignment");
+
+    const auto* section = IMAGE_FIRST_SECTION(nt);
+    bool offsets_match = true;
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (section[i].PointerToRawData != section[i].VirtualAddress) {
+            offsets_match = false;
+        }
+    }
+    check(offsets_match, "every section's file offset equals its RVA");
+
+    // The decisive property: an address the plugin logs as "module +X" must be
+    // at file offset X. Compare a chunk of our own code through both paths.
+    const auto probe = reinterpret_cast<std::uintptr_t>(&test_pattern_parsing);
+    const std::size_t rva = probe - module.base;
+    check(rva + 32 < module.size, "the probe function lies inside the image");
+    check(std::memcmp(file.data() + rva, reinterpret_cast<const void*>(probe), 32) == 0,
+          "code at file offset X matches memory at base+X");
+
+    std::filesystem::remove(out, ec);
+}
+
 }  // namespace
 
 int main() {
@@ -268,6 +327,7 @@ int main() {
     test_module_introspection();
     test_framing();
     test_logger_fallback();
+    test_image_dump();
 
     std::printf("\n%s\n", g_failures == 0 ? "all checks passed" : "THERE WERE FAILURES");
     return g_failures == 0 ? 0 : 1;
