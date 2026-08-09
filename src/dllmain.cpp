@@ -314,8 +314,13 @@ DWORD WINAPI worker(LPVOID) {
         if (fov_ready && fov_config.mode == fov::Mode::Poke) {
             constexpr unsigned int kPokeMs = 60 * 1000;
             fov::run_poke(kPokeMs);
-        } else if (fov_ready && fov_config.mode == fov::Mode::Watch) {
-            constexpr unsigned int kWatchMs = 30 * 1000;
+        } else if (fov_ready && (fov_config.mode == fov::Mode::Watch ||
+                                 fov_config.mode == fov::Mode::TestWatch)) {
+            // 90 s, because this pass needs the player to actively make the
+            // game change the FOV -- aim, use the binoculars, ride. The first
+            // watchpoint run only saw a steady camera and therefore only found
+            // the steady-state writer.
+            constexpr unsigned int kWatchMs = 90 * 1000;
             watchpoint::find_writers(fov::master_address(), module.base, kWatchMs);
         }
 

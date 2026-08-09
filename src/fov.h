@@ -14,14 +14,15 @@ enum class Mode {
     Test,       // unconditional fixed factor, so the effect is unmissable
     Corrected,  // the real thing: k in tangent space, weighted by the letterbox
     Poke,       // no hook: overwrite the master global directly, see run_poke()
-    Watch       // no hook: find who writes the master, see watchpoint.h
+    Watch,      // no hook: find who writes the master, see watchpoint.h
+    TestWatch   // Test hook AND a watchpoint: who undoes our correction?
 };
 
 // Reading fov.txt from inside the game process fails with ERROR_FILE_NOT_FOUND
 // for a file that provably exists, while creating the log in the same directory
 // works. Until that is understood, the mode a build ships with is compiled in
 // here, so a run does not depend on a file we cannot read.
-inline constexpr Mode kCompiledDefaultMode = Mode::Test;
+inline constexpr Mode kCompiledDefaultMode = Mode::TestWatch;
 inline constexpr float kCompiledPokeValue = 25.0f;
 
 struct Config {

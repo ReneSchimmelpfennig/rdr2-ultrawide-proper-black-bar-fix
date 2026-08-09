@@ -140,8 +140,16 @@ void report(std::uintptr_t module_base) {
     logger::info("  distinct writer(s): {}", grouped.size());
     for (std::size_t i = 0; i < grouped.size() && i < 12; ++i) {
         const Entry& e = grouped[i];
-        logger::info("    module +0x{:<9X}  {} hit(s)   <- store ends here", e.rip - module_base,
-                     e.count);
+        // Our own detour writes the same address, from our .asi rather than
+        // from RDR2.exe. Label it so it is not mistaken for a second game path.
+        const std::uintptr_t offset = e.rip - module_base;
+        const bool in_module = offset < 0x8000000;
+        if (in_module) {
+            logger::info("    module +0x{:<9X}  {} hit(s)   <- store ends here", offset, e.count);
+        } else {
+            logger::info("    0x{:016X}      {} hit(s)   <- outside RDR2.exe (our own hook?)",
+                         e.rip, e.count);
+        }
     }
 }
 

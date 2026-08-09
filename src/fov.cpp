@@ -67,6 +67,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             return;
 
         case Mode::Test:
+        case Mode::TestWatch:
             result = original * g_config.test_factor;
             break;
 
@@ -315,6 +316,10 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
     switch (g_config.mode) {
         case Mode::Off:
             logger::info("hook installed, mode OFF -- value passed through unchanged");
+            break;
+        case Mode::TestWatch:
+            logger::info("hook installed, mode TEST+WATCH -- factor {:.3f}, watchpoint follows",
+                         g_config.test_factor);
             break;
         case Mode::Test:
             logger::info("hook installed, mode TEST -- every FOV multiplied by {:.3f}",
