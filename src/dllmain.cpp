@@ -306,7 +306,14 @@ DWORD WINAPI worker(LPVOID) {
         // The actual fix. Installed before the watch so the watch shows the
         // hooked values -- degA is written from the getter's return value, so
         // it doubles as an in-log confirmation that the detour is live.
-        fov::install(mem::executable_sections(module), module, anchor, fov::read_config());
+        const fov::Config fov_config = fov::read_config();
+        const bool fov_ready =
+            fov::install(mem::executable_sections(module), module, anchor, fov_config);
+
+        if (fov_ready && fov_config.mode == fov::Mode::Poke) {
+            constexpr unsigned int kPokeMs = 60 * 1000;
+            fov::run_poke(kPokeMs);
+        }
 
         // The differential search has already run and produced the candidates
         // in patterns::candidates. Normally we now just watch them. Drop a file

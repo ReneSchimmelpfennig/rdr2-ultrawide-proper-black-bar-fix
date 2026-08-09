@@ -26,6 +26,7 @@ void* g_target = nullptr;
 
 std::uintptr_t g_weight_addr = 0;
 std::uintptr_t g_bar_addr = 0;
+std::uintptr_t g_master_addr = 0;
 Config g_config;
 
 // The detour runs several times per frame from ten call sites, so it must stay
@@ -111,6 +112,12 @@ Config read_config() {
         config.mode = Mode::Corrected;
     } else if (word == "off") {
         config.mode = Mode::Off;
+    } else if (word == "poke") {
+        config.mode = Mode::Poke;
+        float value = 0.0f;
+        if (file >> value && value > 1.0f && value < 170.0f) {
+            config.poke_value = value;
+        }
     } else if (word == "test") {
         config.mode = Mode::Test;
         float factor = 0.0f;
@@ -187,8 +194,14 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
         current = read_float(target);
     }
 
-    logger::info("  reads {:.4f} degrees after {:.1f} s -- plausible, installing", current,
+    logger::info("  reads {:.4f} degrees after {:.1f} s -- plausible", current,
                  static_cast<double>(waited) / 1000.0);
+    g_master_addr = target;
+
+    if (g_config.mode == Mode::Poke) {
+        logger::info("mode POKE -- not hooking; the global is overwritten directly");
+        return true;
+    }
 
     g_target = reinterpret_cast<void*>(getter);
     if (const MH_STATUS status =
@@ -220,6 +233,53 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
             break;
     }
     return true;
+}
+
+void run_poke(unsigned int duration_ms) {
+    if (g_master_addr == 0) {
+        logger::info("poke: master address unknown -- nothing to do");
+        return;
+    }
+
+    // .data is writable, but say so out loud rather than assuming it.
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(g_master_addr), &mbi, sizeof(mbi)) == 0 ||
+        (mbi.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE |
+                        PAGE_EXECUTE_WRITECOPY)) == 0) {
+        logger::info("poke: the master global is not writable (protect 0x{:X}) -- aborting",
+                     mbi.Protect);
+        return;
+    }
+
+    logger::info("");
+    logger::info("=== POKE: writing {:.3f} over the master FOV for {} s ===", g_config.poke_value,
+                 duration_ms / 1000);
+    logger::info("Watch the picture. Expect flicker rather than a clean change --");
+    logger::info("we are racing the game's own per-frame write, and that is fine:");
+    logger::info("flicker answers 'does this address reach the projection at all'.");
+
+    const DWORD started = GetTickCount();
+    DWORD last_report = started;
+    unsigned long long writes = 0;
+    float last_seen = 0.0f;
+
+    while (GetTickCount() - started < duration_ms) {
+        last_seen = read_float(g_master_addr);
+        std::memcpy(reinterpret_cast<void*>(g_master_addr), &g_config.poke_value, sizeof(float));
+        ++writes;
+
+        const DWORD now = GetTickCount();
+        if (now - last_report >= 5000) {
+            // If the game keeps winning the race, what we read back is its
+            // value, not ours -- that tells us how contested the address is.
+            logger::info("  {} writes, last value read back before writing: {:.4f}", writes,
+                         last_seen);
+            last_report = now;
+        }
+        Sleep(1);
+    }
+
+    logger::info("=== POKE done, {} writes ===", writes);
 }
 
 void uninstall() {
