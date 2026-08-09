@@ -44,7 +44,7 @@ std::atomic<bool> g_force{false};
 // Periodic sampling while a cutscene is on screen, to make compounding visible.
 std::atomic<DWORD> g_last_sample{0};
 std::atomic<int> g_samples{0};
-constexpr int kMaxSamples = 200;
+constexpr int kMaxSamples = 3000;
 
 float read_float(std::uintptr_t addr) {
     float value = 0.0f;
@@ -184,15 +184,23 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             // frame and the picture would collapse to a telephoto view. Sample
             // the values into the log so that shows up as evidence rather than
             // as a vague complaint about the zoom.
+            // During the ramp the weight changes every frame, so this is where
+            // any leftover double correction shows up. Log every single call
+            // there -- a sample every 500 ms already hid one bug by only ever
+            // catching a well-behaved structure. Once the weight is settled,
+            // fall back to sampling so the log stays finite.
+            const bool in_transition = weight > 0.0f && weight < 0.999f;
             const DWORD now = GetTickCount();
-            const DWORD last = g_last_sample.load(std::memory_order_relaxed);
-            if (now - last >= 500 && g_samples.load() < kMaxSamples) {
-                g_last_sample.store(now, std::memory_order_relaxed);
+            const bool due = now - g_last_sample.load(std::memory_order_relaxed) >= 500;
+
+            if ((in_transition || due) && g_samples.load() < kMaxSamples) {
+                if (!in_transition) {
+                    g_last_sample.store(now, std::memory_order_relaxed);
+                }
                 g_samples.fetch_add(1);
                 logger::info(
-                    "  cutscene: weight {:.3f}  k {:.5f}  strength {:.2f}  blend {:.5f}  "
-                    "{:.3f} -> {:.3f}",
-                    weight, k, g_strength.load(), factor, original, result);
+                    "  {} dst 0x{:012X}  weight {:.4f}  blend {:.5f}  {:9.4f} -> {:9.4f}",
+                    in_transition ? "RAMP  " : "steady", dst, weight, factor, original, result);
             }
             break;
         }
