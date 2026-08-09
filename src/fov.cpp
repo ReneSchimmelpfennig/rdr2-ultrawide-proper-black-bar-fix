@@ -39,6 +39,7 @@ std::atomic<int> g_calls{0};
 constexpr int kLoggedCalls = 8;
 
 std::atomic<float> g_strength{1.0f};
+std::atomic<bool> g_force{false};
 
 // Periodic sampling while a cutscene is on screen, to make compounding visible.
 std::atomic<DWORD> g_last_sample{0};
@@ -107,6 +108,9 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
 
         case Mode::Corrected: {
             weight = read_float(g_weight_addr);
+            if (g_force.load() && weight <= 0.0f) {
+                weight = 1.0f;  // measurement aid: pretend the bars are fully in
+            }
             if (weight <= 0.0f) {
                 return;  // gameplay: leave the camera exactly as authored
             }
@@ -471,6 +475,10 @@ void set_strength(float value) {
 }
 
 float strength() { return g_strength.load(); }
+
+void set_force(bool on) { g_force.store(on); }
+
+bool forced() { return g_force.load(); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();

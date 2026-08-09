@@ -273,6 +273,8 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F7   correction on / off");
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("  F11  force the correction in gameplay (for still comparisons)");
+    logger::info("  F12  set strength to exactly 1.00");
     logger::info("current: strength {:.2f}, bars {}", fov::strength(),
                  bars::hidden() ? "hidden" : "visible");
 
@@ -283,7 +285,7 @@ void run_hotkeys(unsigned int duration_ms) {
         return edge;
     };
 
-    bool f7 = false, f8 = false, f9 = false, f10 = false;
+    bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
     float saved_strength = fov::strength();
 
     const DWORD started = GetTickCount();
@@ -308,6 +310,14 @@ void run_hotkeys(unsigned int duration_ms) {
         if (pressed(VK_F10, f10)) {
             fov::set_strength(fov::strength() + 0.05f);
             logger::info("F10: strength {:.2f}", fov::strength());
+        }
+        if (pressed(VK_F11, f11)) {
+            fov::set_force(!fov::forced());
+            logger::info("F11: gameplay force {}", fov::forced() ? "ON" : "OFF");
+        }
+        if (pressed(VK_F12, f12)) {
+            fov::set_strength(1.0f);
+            logger::info("F12: strength reset to 1.00");
         }
         Sleep(30);
     }

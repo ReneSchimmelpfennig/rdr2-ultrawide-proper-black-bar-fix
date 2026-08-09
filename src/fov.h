@@ -74,6 +74,14 @@ void run_poke(unsigned int duration_ms);
 void set_strength(float value);
 [[nodiscard]] float strength();
 
+// Applies the correction in gameplay too, as if the letterbox were fully in.
+//
+// Cutscene cameras move, which makes an exact before/after comparison awkward.
+// Standing still in gameplay gives a frozen scene where two screenshots differ
+// in exactly one thing: the correction. Not for normal use.
+void set_force(bool on);
+[[nodiscard]] bool forced();
+
 // Logs every camera-state destination the detour has seen, with hit counts and
 // whether it is the master. Call after a run to find out which structures exist
 // -- only one of them can be the one the projection reads.
