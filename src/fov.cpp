@@ -214,12 +214,35 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         }
     }
 
+    // Read the weight up front so the decision log can carry it. Cheap, and it
+    // keeps every exit path uniform.
+    float weight = (g_config.mode == Mode::Corrected) ? read_float(g_weight_addr) : 0.0f;
+    if (g_config.mode == Mode::Corrected && g_force.load() && weight <= 0.0f) {
+        weight = 1.0f;
+    }
+    const float shader_now = (slot != kNoSlot) ? read_float(g_shader_fov_addr) : 0.0f;
+    const float previous_now =
+        (slot != kNoSlot) ? g_dst_last_final[slot].load(std::memory_order_relaxed) : 0.0f;
+
     // Every path from here on must leave the current value behind, or the test
     // above goes stale. The previous version returned early in gameplay without
     // storing, which broke the detection for exactly the cameras it needed.
-    const auto finish = [&](float final_value) {
+    //
+    // It also logs. Four attempts at this jitter went wrong partly because the
+    // log only ever showed the calls that *were* corrected -- never the ones
+    // that were skipped, nor why. During a transition every decision is now
+    // recorded, whatever it was.
+    const auto finish = [&](float final_value, const char* decision) {
         if (slot != kNoSlot) {
             g_dst_last_final[slot].store(final_value, std::memory_order_relaxed);
+        }
+        const bool in_transition = weight > 0.0f && weight < 0.999f;
+        if (in_transition && g_samples.load() < kMaxSamples) {
+            g_samples.fetch_add(1);
+            logger::info(
+                "  {:<8} dst 0x{:012X}  w {:.4f}  in {:9.4f}  prev {:9.4f}  shader {:9.4f}"
+                "  -> {:9.4f}",
+                decision, dst, weight, original, previous_now, shader_now, final_value);
         }
     };
 
@@ -229,19 +252,22 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     //
     // is_our_own_output stays as a safety net for the case of two rendered
     // cameras feeding each other.
-    if (!is_rendered || is_our_own_output(original)) {
-        finish(original);
+    if (!is_rendered) {
+        finish(original, "skip-not");
+        return;
+    }
+    if (is_our_own_output(original)) {
+        finish(original, "skip-own");
         return;
     }
 
     float result = original;
-    float weight = 0.0f;
 
     switch (g_config.mode) {
         case Mode::Off:
         case Mode::Poke:
         case Mode::Watch:
-            finish(original);
+            finish(original, "skip-off");
             return;
 
         case Mode::Test:
@@ -250,12 +276,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             break;
 
         case Mode::Corrected: {
-            weight = read_float(g_weight_addr);
-            if (g_force.load() && weight <= 0.0f) {
-                weight = 1.0f;  // measurement aid: pretend the bars are fully in
-            }
             if (weight <= 0.0f) {
-                finish(original);  // gameplay: leave the camera exactly as authored
+                finish(original, "gameplay");  // leave the camera exactly as authored
                 return;
             }
             // k straight from the game's own bar height: it already divides by
@@ -273,37 +295,6 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             const double factor = framing::blended_factor(scaled, weight);
             result = static_cast<float>(framing::corrected_vfov_deg(original, factor));
 
-            // ApplyCameraState is called for two dozen camera states, and some
-            // of them may well feed each other. If a corrected value ever ends
-            // up as somebody's source, the correction would compound frame over
-            // frame and the picture would collapse to a telephoto view. Sample
-            // the values into the log so that shows up as evidence rather than
-            // as a vague complaint about the zoom.
-            // During the ramp the weight changes every frame, so this is where
-            // any leftover double correction shows up. Log every single call
-            // there -- a sample every 500 ms already hid one bug by only ever
-            // catching a well-behaved structure. Once the weight is settled,
-            // fall back to sampling so the log stays finite.
-            const bool in_transition = weight > 0.0f && weight < 0.999f;
-            const DWORD now = GetTickCount();
-            const bool due = now - g_last_sample.load(std::memory_order_relaxed) >= 500;
-
-            if ((in_transition || due) && g_samples.load() < kMaxSamples) {
-                if (!in_transition) {
-                    g_last_sample.store(now, std::memory_order_relaxed);
-                }
-                g_samples.fetch_add(1);
-                // The shader constant reflects whichever camera actually got
-                // rendered. Logging it next to every destination shows which of
-                // the two dozen is the one downstream of the blend -- that is
-                // the only one that should be corrected.
-                const float shader = read_float(g_shader_fov_addr);
-                logger::info(
-                    "  {} dst 0x{:012X}  weight {:.4f}  blend {:.5f}  {:9.4f} -> {:9.4f}"
-                    "   shader {:9.4f}",
-                    in_transition ? "RAMP  " : "steady", dst, weight, factor, original, result,
-                    shader);
-            }
             break;
         }
     }
@@ -311,7 +302,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     result = tag(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
     remember_output(result);
-    finish(result);
+    finish(result, "CORRECT");
 
     const int call = g_calls.fetch_add(1);
     if (call < kLoggedCalls) {
