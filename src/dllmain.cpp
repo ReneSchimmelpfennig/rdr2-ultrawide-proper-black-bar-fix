@@ -371,22 +371,16 @@ DWORD WINAPI worker(LPVOID) {
     if (const std::uintptr_t anchor = scan_until_found(module); anchor != 0) {
         const std::uintptr_t weight = anchor + patterns::letterbox::kWeight;
 
-        // The dump is written once; on later launches this returns immediately
-        // and we go straight to hunting.
-        std::filesystem::path existing = logger::path();
-        existing.replace_filename(L"RDR2.dump.exe");
         std::error_code ec;
-        if (!std::filesystem::exists(existing, ec)) {
-            constexpr DWORD kWatchMs = 10 * 60 * 1000;
-            const bool saw_cutscene = monitor_letterbox_state(anchor, kWatchMs);
-            dump_image_once(module, saw_cutscene);
-        } else {
-            logger::info("image dump already present, skipping straight to the hunt");
-        }
 
-        // The actual fix. Installed before the watch so the watch shows the
-        // hooked values -- degA is written from the getter's return value, so
-        // it doubles as an in-log confirmation that the detour is live.
+        // The fix goes in first, always. It used to sit behind a check for the
+        // image dump: no dump meant ten minutes of watching a letterbox and no
+        // hook at all. That made a diagnostic step a precondition for the actual
+        // feature, and when the log moved the dump was suddenly "missing" and
+        // the whole fix quietly stopped working.
+        //
+        // The dump is a reverse-engineering aid. It runs when asked, never
+        // otherwise.
         const fov::Config fov_config = fov::read_config();
         const bool fov_ready =
             fov::install(mem::executable_sections(module), module, anchor, fov_config);
@@ -427,6 +421,15 @@ DWORD WINAPI worker(LPVOID) {
         watch_marker.replace_filename(L"watch-candidates");
         std::filesystem::path geometry_marker = logger::path();
         geometry_marker.replace_filename(L"find-2d");
+        std::filesystem::path dump_marker = logger::path();
+        dump_marker.replace_filename(L"dump-image");
+
+        if (std::filesystem::exists(dump_marker, ec)) {
+            logger::info("'dump-image' found -- waiting for a cutscene, then dumping");
+            constexpr DWORD kWatchMs = 10 * 60 * 1000;
+            const bool saw_cutscene = monitor_letterbox_state(anchor, kWatchMs);
+            dump_image_once(module, saw_cutscene);
+        }
 
         constexpr unsigned int kTimeoutMs = 15 * 60 * 1000;
         const mem::Region data = mem::section(module, ".data");

@@ -29,28 +29,35 @@ std::wstring environment_variable(const wchar_t* name) {
     return value;
 }
 
-// Beside the .asi, then %LOCALAPPDATA%\RDR2UltrawideCutsceneFix\. The first is
-// nicer to find, the second is the one that actually works when the game folder
-// is read-only for the user the game runs as.
-std::vector<std::filesystem::path> candidate_paths(HMODULE self) {
+// Always %LOCALAPPDATA%\RDR2UltrawideCutsceneFix\, never the game folder.
+//
+// It used to try beside the .asi first, which seemed friendlier. Two problems
+// came of that. The game folder is normally read-only, so it silently fell
+// through -- until it became writable, at which point the log moved and every
+// path derived from it moved with it. The plugin then looked for its image dump
+// in the new place, did not find it, and took the "no dump yet" branch: no FOV
+// hook, no bar removal, no sign of anything wrong. The fix appeared to have
+// stopped working.
+//
+// Writing into the game directory is also something this project does not do
+// without being asked, and a log is not an exception.
+std::vector<std::filesystem::path> candidate_paths(HMODULE) {
     std::vector<std::filesystem::path> candidates;
 
-    wchar_t module_path[MAX_PATH]{};
-    if (GetModuleFileNameW(self, module_path, MAX_PATH) != 0) {
-        std::filesystem::path beside(module_path);
-        beside.replace_extension(L".log");
-        candidates.push_back(std::move(beside));
-    }
-
     if (const std::wstring local = environment_variable(L"LOCALAPPDATA"); !local.empty()) {
-        std::filesystem::path fallback(local);
-        fallback /= L"RDR2UltrawideCutsceneFix";
+        std::filesystem::path dir(local);
+        dir /= L"RDR2UltrawideCutsceneFix";
 
         std::error_code ec;
-        std::filesystem::create_directories(fallback, ec);
+        std::filesystem::create_directories(dir, ec);
         if (!ec) {
-            candidates.push_back(fallback / L"plugin.log");
+            candidates.push_back(dir / L"plugin.log");
         }
+    }
+
+    // Last resort only: somewhere writable is better than nowhere.
+    if (const std::wstring temp = environment_variable(L"TEMP"); !temp.empty()) {
+        candidates.push_back(std::filesystem::path(temp) / L"RDR2UltrawideCutsceneFix.log");
     }
 
     return candidates;
