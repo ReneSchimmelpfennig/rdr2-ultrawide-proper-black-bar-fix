@@ -110,7 +110,7 @@ def scan_bytes(blob):
 # Counters, so a null result can be told apart from a null attempt. The previous
 # version swallowed every error and reported "nothing matched" -- which would
 # have looked identical to reading no buffers at all.
-STATS = {"blocks": 0, "read": 0, "bytes": 0, "errors": []}
+STATS = {"blocks": 0, "read": 0, "bytes": 0, "errors": [], "accessor": "none"}
 
 
 def buffers_for(controller, pipe, stage):
@@ -123,10 +123,25 @@ def buffers_for(controller, pipe, stage):
         return out
     if not refl:
         return out
+    # The accessor has been renamed across RenderDoc versions; the first attempt
+    # hard-coded GetConstantBuffer, which does not exist here, and reported a
+    # null result that meant nothing. Ask the object what it actually offers.
+    getter = None
+    for candidate in ("GetConstantBlock", "GetConstantBuffer", "GetCBuffer"):
+        if hasattr(pipe, candidate):
+            getter = getattr(pipe, candidate)
+            STATS["accessor"] = candidate
+            break
+    if getter is None:
+        if not STATS["errors"]:
+            available = [n for n in dir(pipe) if "onstant" in n or "Buffer" in n]
+            STATS["errors"].append("no known accessor; PipeState offers: %s" % ", ".join(available))
+        return out
+
     for index, block in enumerate(refl.constantBlocks):
         STATS["blocks"] += 1
         try:
-            bound = pipe.GetConstantBuffer(stage, index, 0)
+            bound = getter(stage, index, 0)
             if bound.resourceId == rd.ResourceId.Null():
                 continue
             size = bound.byteSize
@@ -186,8 +201,8 @@ def collect(controller):
 
     lines.append("")
     lines.append("examined %d draws writing the final image" % examined)
-    lines.append("constant blocks seen: %d, actually read: %d, bytes: %d" %
-                 (STATS["blocks"], STATS["read"], STATS["bytes"]))
+    lines.append("constant blocks seen: %d, actually read: %d, bytes: %d, accessor: %s" %
+                 (STATS["blocks"], STATS["read"], STATS["bytes"], STATS["accessor"]))
     for err in STATS["errors"]:
         lines.append("  error: %s" % err)
 
