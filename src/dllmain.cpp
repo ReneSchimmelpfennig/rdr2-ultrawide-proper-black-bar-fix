@@ -38,6 +38,10 @@ std::uintptr_t g_anchor_store = 0;
 // searches that could never start.
 std::atomic<bool> g_request_2d_search{false};
 
+// The letterbox struct, so the hotkey thread can measure what a patch did
+// instead of relying on the picture.
+std::uintptr_t g_letterbox_anchor = 0;
+
 // Refuse to do anything if we somehow got loaded into a different process --
 // every signature in patterns.h is specific to RDR2.exe.
 bool host_is_rdr2() {
@@ -282,6 +286,39 @@ void dump_image_once(const mem::Region& module, bool after_cutscene) {
     logger::info("  file offsets equal RVAs -- '+0x320545' in this log is 0x320545 in the file");
 }
 
+// What the letterbox struct says right now, sampled over a few frames.
+//
+// Exists because a probe that changes nothing on screen is ambiguous: it can
+// mean the value does not drive the picture, or that the value never changed at
+// all. Twice now that ambiguity has cost a game session. The struct is the
+// nearest measurable point downstream of the aspect getter, so it settles which
+// of the two happened without anyone judging a picture by eye.
+void sample_letterbox(const char* label) {
+    if (g_letterbox_anchor == 0) {
+        logger::info("  {}: no letterbox anchor -- cannot measure", label);
+        return;
+    }
+    const std::uintptr_t weight_addr = g_letterbox_anchor + patterns::letterbox::kWeight;
+    const std::uintptr_t bar235_addr = g_letterbox_anchor + patterns::letterbox::kBarFraction235;
+    const std::uintptr_t display_addr =
+        g_letterbox_anchor + patterns::letterbox::kBarFractionDisplay;
+
+    if (!is_readable(weight_addr, patterns::letterbox::kStride)) {
+        logger::info("  {}: letterbox struct unreadable", label);
+        return;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        const float weight = read_float(weight_addr);
+        const float bar235 = read_float(bar235_addr);
+        const float display = read_float(display_addr);
+        logger::info("  {} [{}]  weight {:.4f}  bar(2.35) {:.6f}  bar(display) {:.6f}  k {:.5f}",
+                     label, i, weight, bar235, display,
+                     framing::correction_factor_from_bars(display, weight));
+        Sleep(80);
+    }
+}
+
 // Live controls, so the framing can be judged and dialled in during a single
 // cutscene instead of one game launch per guess.
 void run_hotkeys(unsigned int duration_ms) {
@@ -334,7 +371,12 @@ void run_hotkeys(unsigned int duration_ms) {
                 logger::info("  ... but the aspect probe never armed -- nothing was changed, so a");
                 logger::info("      picture that does not move says nothing here");
             }
+            sample_letterbox("before");
             safearea::set_aspect_pretend_16_9(!safearea::aspect_pretending());
+            sample_letterbox("after ");
+            // Does the patch survive? Arxan restoring it would look exactly like
+            // a value that does not matter, and the two need telling apart.
+            safearea::verify_aspect_patch();
         }
         if (combo_pressed('S', safe_key)) {
             safearea::set_flat(!safearea::flat());
@@ -415,6 +457,7 @@ DWORD WINAPI worker(LPVOID) {
 
     if (const std::uintptr_t anchor = scan_until_found(module); anchor != 0) {
         const std::uintptr_t weight = anchor + patterns::letterbox::kWeight;
+        g_letterbox_anchor = anchor;
 
         std::error_code ec;
 

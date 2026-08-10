@@ -5,6 +5,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <format>
+#include <string>
 #include <string_view>
 
 #include "log.h"
@@ -55,6 +57,7 @@ constexpr std::size_t kAspectPatchSize = 10;
 std::uintptr_t g_aspect_site = 0;
 std::uintptr_t g_aspect_global = 0;
 std::array<std::uint8_t, kAspectPatchSize> g_aspect_original{};
+std::array<std::uint8_t, kAspectPatchSize> g_aspect_expected{};
 int g_aspect_candidates = 0;
 bool g_aspect_flat = false;
 
@@ -274,9 +277,41 @@ bool set_aspect_pretend_16_9(bool on) {
         logger::info("safearea: could not write the aspect patch");
         return false;
     }
+    g_aspect_expected = bytes;
     g_aspect_flat = on;
     logger::info("safearea: aspect reported as {}", on ? "16:9" : "the real display aspect");
     return true;
+}
+
+void verify_aspect_patch() {
+    if (g_aspect_site == 0) {
+        return;
+    }
+    if (!readable(g_aspect_site, kAspectPatchSize)) {
+        logger::info("safearea: the patch site is no longer readable");
+        return;
+    }
+
+    std::array<std::uint8_t, kAspectPatchSize> now{};
+    std::memcpy(now.data(), reinterpret_cast<const void*>(g_aspect_site), now.size());
+
+    const bool matches_expected = now == g_aspect_expected;
+    const bool matches_original = now == g_aspect_original;
+
+    std::string bytes;
+    for (const std::uint8_t byte : now) {
+        bytes += std::format("{:02X} ", byte);
+    }
+    logger::info("safearea: patch site now reads {}", bytes);
+
+    if (matches_expected) {
+        logger::info("safearea:   -- that is what we wrote, the patch is holding");
+    } else if (matches_original) {
+        logger::info("safearea:   -- that is the ORIGINAL: something restored it (Arxan?).");
+        logger::info("safearea:      the probe result is void, not negative.");
+    } else {
+        logger::info("safearea:   -- neither ours nor the original; the code moved underneath us");
+    }
 }
 
 bool aspect_pretending() { return g_aspect_flat; }

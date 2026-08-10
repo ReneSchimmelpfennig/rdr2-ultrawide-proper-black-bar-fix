@@ -76,6 +76,13 @@ bool set_aspect_pretend_16_9(bool on);
 [[nodiscard]] bool aspect_pretending();
 [[nodiscard]] int aspect_count();
 
+// Re-reads the patch site and logs whether it still holds what we wrote.
+//
+// RDR2.exe is Arxan-protected. A restored patch and a value that does not
+// matter produce the same symptom -- nothing moves -- and guessing between them
+// is how sessions get wasted. This distinguishes them.
+void verify_aspect_patch();
+
 void restore();
 
 }  // namespace safearea
