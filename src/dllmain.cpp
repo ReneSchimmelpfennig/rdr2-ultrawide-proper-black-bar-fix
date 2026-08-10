@@ -273,6 +273,7 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F7   correction on / off");
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("  Ctrl+Alt+B   zero the bar heights (test: do the artefacts go away?)");
     logger::info("  F11  force the correction in gameplay (for still comparisons)");
     logger::info("  F12  set strength to exactly 1.00");
     logger::info("current: strength {:.2f}, bars {}", fov::strength(),
@@ -284,11 +285,26 @@ void run_hotkeys(unsigned int duration_ms) {
         was_down = down;
         return edge;
     };
+    bool bars_key = false;  // Ctrl+Alt+B; not F6, that is RDR2's photo mode
     bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
+
+    const auto combo_pressed = [](int vk, bool& was_down) {
+        const bool held = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
+                          (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+        const bool down = held && (GetAsyncKeyState(vk) & 0x8000) != 0;
+        const bool edge = down && !was_down;
+        was_down = down;
+        return edge;
+    };
     float saved_strength = fov::strength();
 
     const DWORD started = GetTickCount();
     while (GetTickCount() - started < duration_ms) {
+        if (combo_pressed('B', bars_key)) {
+            fov::set_flatten_bars(!fov::flattening_bars());
+            logger::info("Ctrl+Alt+B: bar heights zeroed {}",
+                         fov::flattening_bars() ? "ON" : "OFF");
+        }
         if (pressed(VK_F7, f7)) {
             if (fov::strength() > 0.0f) {
                 saved_strength = fov::strength();

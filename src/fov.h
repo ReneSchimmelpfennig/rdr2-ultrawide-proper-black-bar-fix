@@ -83,10 +83,19 @@ void set_strength(float value);
 void set_force(bool on);
 [[nodiscard]] bool forced();
 
-// Note for whoever looks at the 2D layout next: zeroing the two bar-height
-// floats every frame was tried and does nothing. The 2D layer keeps laying out
-// for the 2560 x 1090 window regardless, so it takes its safe area from
-// somewhere else. See docs/how-it-works.md.
+// Zeroes the two bar-height floats every frame.
+//
+// Tried once before and dismissed too quickly, because the only thing looked at
+// was the size of the 2D elements -- which it does not change. A RenderDoc
+// capture has since shown a second, separate problem: one fullscreen effect is
+// scissored to the letterbox band, so the strips the bars normally cover stay
+// unfiltered. That scissor has to be derived from the bar geometry, which is
+// exactly what these two floats carry.
+//
+// Same switch, different question: not "do the elements resize" but "do the
+// artefacts disappear".
+void set_flatten_bars(bool on);
+[[nodiscard]] bool flattening_bars();
 
 // Logs every camera-state destination the detour has seen, with hit counts and
 // whether it is the master. Call after a run to find out which structures exist

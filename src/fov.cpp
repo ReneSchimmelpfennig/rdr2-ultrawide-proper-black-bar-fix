@@ -41,6 +41,8 @@ constexpr int kLoggedCalls = 8;
 
 std::atomic<float> g_strength{1.0f};
 std::atomic<bool> g_force{false};
+std::atomic<bool> g_flatten{false};
+std::atomic<int> g_flatten_logged{0};
 
 // Per-call decision logging. Invaluable while the correction was being worked
 // out -- it is what finally showed the double corrections during a transition --
@@ -325,6 +327,22 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
             const double factor = framing::blended_factor(scaled, weight);
             result = static_cast<float>(framing::corrected_vfov_deg(original, factor));
+
+            // Order matters: k came from the bar height just above, so the
+            // heights may only be cleared afterwards. The camera update runs
+            // early in the frame, well before the scissor is set.
+            if (g_flatten.load(std::memory_order_relaxed)) {
+                const std::uintptr_t bar235 = g_weight_addr +
+                                              patterns::letterbox::kBarFraction235 -
+                                              patterns::letterbox::kWeight;
+                if (g_flatten_logged.fetch_add(1) == 0) {
+                    logger::info("flatten: bar heights were {:.5f} / {:.5f}, now zero",
+                                 read_float(bar235), read_float(g_bar_addr));
+                }
+                const float zero = 0.0f;
+                std::memcpy(reinterpret_cast<void*>(bar235), &zero, sizeof(zero));
+                std::memcpy(reinterpret_cast<void*>(g_bar_addr), &zero, sizeof(zero));
+            }
 
 
             break;
@@ -667,6 +685,13 @@ float strength() { return g_strength.load(); }
 void set_force(bool on) { g_force.store(on); }
 
 bool forced() { return g_force.load(); }
+
+void set_flatten_bars(bool on) {
+    g_flatten.store(on);
+    g_flatten_logged.store(0);
+}
+
+bool flattening_bars() { return g_flatten.load(); }
 
 
 void report_destinations(std::uintptr_t module_base) {
