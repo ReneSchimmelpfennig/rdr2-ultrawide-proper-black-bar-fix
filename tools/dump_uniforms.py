@@ -30,6 +30,19 @@ TARGETS = [
     ("1/1090", 1.0 / 1090.0),
     ("1/3440", 1.0 / 3440.0),
     ("1/1440", 1.0 / 1440.0),
+
+    # The numbers the game actually works in. The mesh viewer settled it: a
+    # pillarbox quad arrives with x = 0.87209 and leaves as 0.74419 in clip
+    # space, so the CPU hands over edges in [0,1] and the vertex shader only
+    # does the usual *2-1. Searching for 2560 or for k missed this entirely --
+    # the value on the wire is (1+k)/2.
+    ("right edge (1+k)/2 = 0.872093", 0.872093),
+    ("left edge (1-k)/2 = 0.127907", 0.127907),
+    ("bottom edge 0.878251", 0.878251),
+    ("top edge 0.121749", 0.121749),
+    ("letterbox NDC 0.756502", 0.756502),
+    ("letterbox NDC 0.243498", 0.243498),
+    ("-k = -0.744186", -0.744186),
 ]
 
 RELATIVE_TOLERANCE = 1e-4
