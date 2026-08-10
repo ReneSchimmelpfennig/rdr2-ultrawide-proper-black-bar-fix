@@ -230,6 +230,83 @@ void run_hotkey(const mem::Region& search_area, std::uintptr_t module_base,
     logger::info("so it reaches the projection -- unlike the getter and the master global.");
 }
 
+void find_known_values(const mem::Region& search_area, std::uintptr_t module_base,
+                       std::uintptr_t weight_addr, unsigned int timeout_ms) {
+    struct Needle {
+        const char* what;
+        float as_float;
+        std::int32_t as_int;
+        bool search_int;
+    };
+
+    // Everything the 2D layer would need to box itself into the cutscene window.
+    const Needle needles[] = {
+        {"visible width  2560", 2560.0f, 2560, true},
+        {"visible height 1090", 1090.0f, 1090, true},
+        {"side bar       440", 440.0f, 440, true},
+        {"top bar        175", 175.0f, 175, true},
+        {"k              0.744186", 0.744186f, 0, false},
+        {"bar frac       0.127907", 0.127907f, 0, false},
+        {"bar frac       0.121749", 0.121749f, 0, false},
+        {"1/k            1.343750", 1.34375f, 0, false},
+        {"height ratio   0.756944", 0.756944f, 0, false},
+    };
+
+    logger::info("");
+    logger::info("=== searching for the known 2D geometry ===");
+    logger::info("area 0x{:016X} .. 0x{:016X} ({:.1f} MB)", search_area.base, search_area.end(),
+                 static_cast<double>(search_area.size) / (1024.0 * 1024.0));
+    logger::info("get into a cutscene and stay there; the scan starts once the bars are fully in.");
+
+    const DWORD deadline = GetTickCount() + timeout_ms;
+    if (!wait_for(weight_addr, is_full_bars, deadline)) {
+        logger::info("timed out waiting for a cutscene -- aborted");
+        return;
+    }
+    Sleep(500);
+
+    for (const Needle& needle : needles) {
+        std::vector<std::uintptr_t> as_float;
+        std::vector<std::uintptr_t> as_int;
+
+        for (const mem::Region& sub : mem::readable_subranges(search_area)) {
+            std::uintptr_t addr = (sub.base + 3) & ~static_cast<std::uintptr_t>(3);
+            for (; addr + 4 <= sub.end(); addr += 4) {
+                float f = 0.0f;
+                std::memcpy(&f, reinterpret_cast<const void*>(addr), sizeof(f));
+                if (f == needle.as_float) {
+                    as_float.push_back(addr);
+                }
+                if (needle.search_int) {
+                    std::int32_t i = 0;
+                    std::memcpy(&i, reinterpret_cast<const void*>(addr), sizeof(i));
+                    if (i == needle.as_int) {
+                        as_int.push_back(addr);
+                    }
+                }
+            }
+        }
+
+        logger::info("{}: {} as float, {} as int32", needle.what, as_float.size(), as_int.size());
+
+        // Only list the rare ones. A value with hundreds of hits is a constant
+        // that happens to be common and says nothing.
+        const auto list = [&](const char* kind, const std::vector<std::uintptr_t>& hits) {
+            if (hits.empty() || hits.size() > 12) {
+                return;
+            }
+            for (const auto hit : hits) {
+                logger::info("    {} module +0x{:X}", kind, hit - module_base);
+            }
+        };
+        list("float", as_float);
+        list("int32", as_int);
+    }
+
+    logger::info("=== search done ===");
+    logger::info("A value appearing only a handful of times is the interesting one.");
+}
+
 void watch(std::uintptr_t module_base, std::uintptr_t weight_addr, unsigned int duration_ms) {
     struct Slot {
         const char* name;

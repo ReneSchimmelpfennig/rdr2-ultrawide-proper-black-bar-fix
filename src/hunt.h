@@ -55,4 +55,17 @@ void watch(std::uintptr_t module_base, std::uintptr_t weight_addr, unsigned int 
 void run_hotkey(const mem::Region& search_area, std::uintptr_t module_base,
                 unsigned int window_ms);
 
+// Searches for the exact numbers the 2D layer must be built from.
+//
+// The FOV hunt had to sweep a whole plausible range because the value was
+// unknown. Here it is not: the visible cutscene area was measured at 2560x1090
+// inside 3440x1440, so a viewport, a scissor rect or a scale factor holding the
+// 2D layer must contain 2560, 1090, 440 or 175 -- or the ratios derived from
+// them. Looking for known constants is far more selective than a range sweep,
+// and a hit is close to proof.
+//
+// Scans as 32-bit integer and as float, since a viewport may be either.
+void find_known_values(const mem::Region& search_area, std::uintptr_t module_base,
+                       std::uintptr_t weight_addr, unsigned int timeout_ms);
+
 }  // namespace hunt

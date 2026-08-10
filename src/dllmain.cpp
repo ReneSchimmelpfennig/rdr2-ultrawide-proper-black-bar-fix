@@ -409,6 +409,8 @@ DWORD WINAPI worker(LPVOID) {
         hotkey_hunt.replace_filename(L"hunt-hotkey");
         std::filesystem::path watch_marker = logger::path();
         watch_marker.replace_filename(L"watch-candidates");
+        std::filesystem::path geometry_marker = logger::path();
+        geometry_marker.replace_filename(L"find-2d");
 
         constexpr unsigned int kTimeoutMs = 15 * 60 * 1000;
         const mem::Region data = mem::section(module, ".data");
@@ -419,6 +421,9 @@ DWORD WINAPI worker(LPVOID) {
         } else if (std::filesystem::exists(rerun, ec) && data) {
             logger::info("'rerun-hunt' found -- running the differential search again");
             hunt::run(data, weight, module.base, kTimeoutMs);
+        } else if (std::filesystem::exists(geometry_marker, ec) && data) {
+            logger::info("'find-2d' found -- searching for the known 2D geometry");
+            hunt::find_known_values(data, module.base, weight, kTimeoutMs);
         } else if (std::filesystem::exists(watch_marker, ec)) {
             logger::info("'watch-candidates' found -- watching the known addresses");
             hunt::watch(module.base, weight, kTimeoutMs);
