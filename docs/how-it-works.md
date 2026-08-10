@@ -88,6 +88,46 @@ since one patched byte controls the whole thing. Layout and artefacts are then a
 the game intended and the FOV correction stays active. Not the goal of the
 project, but a usable state.
 
+## The 2D layer: what was ruled out
+
+The cutscene 2D layer -- subtitles, credits, the intro's photographic filter --
+is composed for the 2560x1090 window and placed into the 3440x1440 frame
+unscaled. It therefore looks too small, and the strip the bars used to cover
+shows horizontal smearing where the effect samples past the edge of its valid
+region. One cause, both symptoms.
+
+Four approaches were tried and none of them reached it. Recorded here so nobody
+repeats them.
+
+**Zeroing the bar heights.** The two floats in the letterbox struct are set to
+zero every frame. No effect on the 2D layer whatsoever, verified with the toggle
+logging what it overwrote.
+
+**Viewport and scissor rects.** A RenderDoc capture of every draw call in a
+cutscene frame: no viewport and no scissor anywhere carries 2560 or 1090. The 2D
+layer is not boxed in by a rectangle -- its vertices arrive already scaled.
+
+**Pixel history on an artefact pixel.** A broken pixel and a good pixel go
+through the *same* passes in the same order. No pass is missing. The difference
+is already present in the composite that feeds them.
+
+**Searching memory for the geometry.** `hunt::find_known_values` looked for
+2560, 1090, 440 and 175 as int32 and float across the whole of `.data`, plus
+every derived ratio. The ratios do not occur at all -- so the layer works in
+pixels, not in normalised factors. The pixel values that do occur are
+coincidence: three of the four hits for 1090 sit inside an ascending index table
+(1088, 1089, **1090**, 1091, ...), the fourth in a stride-16 enumeration, and the
+440s sit among 680, 582.5, 497.5 in what looks like a distance table. The hit
+list also changed between two runs.
+
+**Conclusion.** The geometry is computed per frame and never stored where it can
+be found or patched. Reaching it would mean intercepting vertex data or uniform
+buffers on the graphics API -- a Vulkan-only undertaking of its own size, and
+one that would have to be built twice to keep DX12 working. Out of proportion to
+a cosmetic fault with a working fallback.
+
+Press **F8** to bring the bars back. The field-of-view correction stays active.
+
 ## Known limits
 
 - At the camera cut ending a cutscene the field of view jumps, because the game
