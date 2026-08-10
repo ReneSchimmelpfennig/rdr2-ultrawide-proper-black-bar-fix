@@ -44,6 +44,37 @@ bool set_flat(bool flat);
 // apart from a null attempt.
 [[nodiscard]] int count();
 
+// ---------------------------------------------------------------------------
+// The aspect probe
+// ---------------------------------------------------------------------------
+//
+// A second, unrelated experiment on the same 2D question.
+//
+// The letterbox maths ends in `bar = (1 - (16/9)/aspect) * 0.5 * weight`, so the
+// game frames a cutscene by mapping a *16:9* window into the display -- and
+// 1440 * 16/9 is 2560 exactly. The 2560x1090 the 2D layer lays out for is
+// therefore not a cutscene rectangle at all, it is the game's 16:9 box.
+//
+// If the 2D layer derives that box from the aspect ratio, a getter that reports
+// 16:9 makes the box the whole screen. That is what this patches: the aspect
+// getter is rewritten to `mov eax, imm32; movd xmm0, eax; ret`, ten bytes, which
+// is exactly what the nine-byte getter plus its one padding byte affords.
+//
+// Strictly a probe. It also flattens the bars as a side effect (the pillarbox
+// term goes to zero) and feeds fifteen other callers, so it is not a candidate
+// for the shipped fix -- it is here to answer whether the aspect is the lever.
+//
+// `display_aspect` is how the getter is identified: every float getter in the
+// image is resolved and the one whose global currently holds that value wins.
+// Nothing is patched unless exactly one does, so a wrong guess cannot silently
+// patch something else.
+bool init_aspect(const std::vector<mem::NamedRegion>& sections, float display_aspect);
+
+bool set_aspect_pretend_16_9(bool on);
+
+[[nodiscard]] bool aspect_pretending();
+[[nodiscard]] int aspect_count();
+
 void restore();
 
 }  // namespace safearea

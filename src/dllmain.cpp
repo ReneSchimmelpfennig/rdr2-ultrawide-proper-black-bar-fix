@@ -290,6 +290,7 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F7   correction on / off");
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("  Ctrl+Alt+A   report the display as 16:9  [2D test -- also flattens the bars]");
     logger::info("  Ctrl+Alt+S   report the bar height as zero to the script layer  [2D test]");
     logger::info("  Ctrl+Alt+B   zero the bar heights (test: do the artefacts go away?)");
     logger::info("  Ctrl+Alt+F   search memory for the 2D geometry (do this in a cutscene)");
@@ -308,6 +309,7 @@ void run_hotkeys(unsigned int duration_ms) {
     bool bars_key = false;    // Ctrl+Alt+B; not F6, that is RDR2's photo mode
     bool search_key = false;  // Ctrl+Alt+F
     bool safe_key = false;    // Ctrl+Alt+S
+    bool aspect_key = false;  // Ctrl+Alt+A
     bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
 
     const auto combo_pressed = [](int vk, bool& was_down) {
@@ -325,6 +327,9 @@ void run_hotkeys(unsigned int duration_ms) {
         if (combo_pressed('F', search_key)) {
             g_request_2d_search.store(true);
             logger::info("Ctrl+Alt+F: 2D geometry search requested");
+        }
+        if (combo_pressed('A', aspect_key)) {
+            safearea::set_aspect_pretend_16_9(!safearea::aspect_pretending());
         }
         if (combo_pressed('S', safe_key)) {
             safearea::set_flat(!safearea::flat());
@@ -427,11 +432,18 @@ DWORD WINAPI worker(LPVOID) {
             bars::init(g_anchor_store);
             bars::set_hidden(true);  // the framing cannot be judged with them on
 
-            // The 2D experiment, on by default so that one cutscene answers the
-            // question. Ctrl+Alt+S turns it off again for the comparison.
-            if (safearea::init(mem::executable_sections(module), anchor)) {
-                safearea::set_flat(true);
-            }
+            // Prepared but not applied: measured to have no effect on the 2D
+            // layer (see docs/how-it-works.md). The site stays reachable by
+            // Ctrl+Alt+S so the measurement can be repeated cheaply, but it is
+            // not part of the fix.
+            safearea::init(mem::executable_sections(module), anchor);
+
+            // The aspect probe. Identified by the value the getter reads, so
+            // the primary display's aspect is what it is looked up by -- good
+            // enough to find a global, and it is logged either way.
+            const float display_aspect = static_cast<float>(GetSystemMetrics(SM_CXSCREEN)) /
+                                         static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+            safearea::init_aspect(mem::executable_sections(module), display_aspect);
 
             // On its own thread. It used to run here and block for an hour,
             // which meant everything below -- every diagnostic tool -- was

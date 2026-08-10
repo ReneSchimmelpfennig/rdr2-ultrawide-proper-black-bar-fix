@@ -138,10 +138,71 @@ arrive scaled down. Vertex positions for 2D elements are computed on the CPU,
 which puts the cause back in game code rather than in the renderer, and makes it
 reachable by the same means as the field of view.
 
-The untried lead: `GetAspectRatio()` at `+0x173964` has fifteen callers. They
-were read once, during the FOV hunt, and dismissed as "only aspect ratios" --
-which is precisely what aspect-driven 2D layout looks like. They deserve a
-second reading with the right question in mind.
+## The letterbox maths, decompiled
+
+The function that writes the letterbox struct ends like this, with every
+constant read out of the image and checked against the measured values:
+
+```
+aspect = GetAspectRatio()                       // 2.388889 at 3440x1440
+bar(display) = (1 - (16/9) / aspect)     * 0.5 * weight   // 0.127907
+bar(2.35)    = (1 - (16/9) / 2.35)       * 0.5 * weight   // 0.121749
+```
+
+Both reproduce exactly. That settles what the framing actually is: **the game
+letterboxes a 16:9 window, not the display.** The pillarbox term is whatever it
+takes to fit 16:9 into the real aspect, and the 2.35 term crops that window to
+scope.
+
+Which reinterprets the measurement this whole investigation started from.
+`1440 x 16/9 = 2560`, exactly. The 2560x1090 the 2D layer lays out for is not a
+cutscene rectangle at all -- it is the game's 16:9 box, cropped to 2.35:1. There
+is no separate "cutscene 2D viewport" to find.
+
+## The 2D layer: two more dead ends, and what they narrowed down
+
+**The bar heights have no consumer other than the bars.** Traced exhaustively
+through xrefs rather than guessed. Each fraction is written by the letterbox
+update, copied once into the second buffer (the struct is double buffered), and
+read from that copy by exactly one function -- which calls a rectangle drawer
+four times, twice with `(0 .. bar)` and twice with `(1-bar .. 1)`. That is the
+bars being drawn and nothing else.
+
+So the 2D layer never reads the bar geometry, and zeroing it could never have
+worked. The earlier "no effect whatsoever" was the correct result for the wrong
+reason.
+
+**The script native.** One further reader exists for the horizontal fraction: a
+nine-byte getter behind a wrapper that is only ever referenced as *data*, from a
+table of 32-bit RVAs full of near-identical neighbours -- a native registration
+table. The bar height is therefore exposed to the script layer, and RDR2 lays
+its cutscene 2D out in script, which made this the best lead so far.
+
+Patched to return zero (`src/safearea.cpp`, still available on Ctrl+Alt+S) and
+tested through a full cutscene: **no change at all.** The patch demonstrably
+applied -- 714 float getters scanned, exactly one identified by its RIP target,
+logged -- so this is a real negative, not a missed attempt.
+
+**What the game already has.** `FUN_7ff675604f38` maps a coordinate pair from
+the 16:9 box onto the full screen, using `aspect * 9/16` as the scale and
+recentring around 0.5. At 3440x1440 that scale is 1.34375, which is `1/k`, and
+it sends 0.127907 to 0.0, 0.5 to 0.5, and 0.872093 to 1.0. This is precisely the
+transform the 2D layer is missing -- and it exists, with three callers, none of
+them the cutscene path.
+
+Also found along the way: `+0xF0DB40` and `+0xF0DB44` hold the real backbuffer
+size as two ints (3440 and 1440 in the dump), which is a better source than
+`GetSystemMetrics` for anything that still needs one.
+
+**The current lead.** If the 2D box comes from the aspect ratio, a getter that
+reports 16:9 makes the box the whole screen. `GetAspectRatio()` is a nine-byte
+`movss xmm0,[rip]; ret` with one padding byte behind it -- ten bytes, exactly
+enough for `mov eax, imm32; movd xmm0, eax; ret`. `safearea::init_aspect()`
+finds it by the value it reads rather than by a byte signature and refuses to
+patch unless exactly one getter matches. Ctrl+Alt+A toggles it.
+
+It is a probe, not a candidate fix: it feeds fifteen callers and flattens the
+bars as a side effect, since the pillarbox term goes to zero.
 
 Press **F8** to bring the bars back. The field-of-view correction stays active.
 

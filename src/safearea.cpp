@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <string_view>
 
@@ -42,6 +43,36 @@ bool write_bytes(std::uintptr_t address, const std::uint8_t* data, std::size_t s
     VirtualProtect(reinterpret_cast<LPVOID>(address), size, old, &ignored);
     FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), size);
     return true;
+}
+
+// --- the aspect probe -------------------------------------------------------
+
+// The nine-byte getter plus the one padding byte behind it. Ten bytes is
+// exactly what `mov eax, imm32; movd xmm0, eax; ret` needs; anything less and
+// we would be writing into the next function.
+constexpr std::size_t kAspectPatchSize = 10;
+
+std::uintptr_t g_aspect_site = 0;
+std::array<std::uint8_t, kAspectPatchSize> g_aspect_original{};
+int g_aspect_candidates = 0;
+bool g_aspect_flat = false;
+
+float read_float(std::uintptr_t address) {
+    float value = 0.0f;
+    std::memcpy(&value, reinterpret_cast<const void*>(address), sizeof(value));
+    return value;
+}
+
+bool readable(std::uintptr_t address, std::size_t size) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &mbi, sizeof(mbi)) == 0) {
+        return false;
+    }
+    if (mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
+        return false;
+    }
+    const auto block_end = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    return address + size <= block_end;
 }
 
 }  // namespace
@@ -127,9 +158,103 @@ bool flat() { return g_flat; }
 
 int count() { return static_cast<int>(g_sites.size()); }
 
+bool init_aspect(const std::vector<mem::NamedRegion>& sections, float display_aspect) {
+    g_aspect_site = 0;
+    g_aspect_candidates = 0;
+
+    const auto pattern = mem::parse_pattern(kFloatGetter);
+    if (!pattern) {
+        return false;
+    }
+
+    std::vector<std::uintptr_t> hits;
+    for (const auto& [name, region] : sections) {
+        mem::find_all(region, *pattern, hits);
+    }
+
+    // Generous: the value only has to look like this display's aspect, because
+    // the point is to identify a global, not to measure one.
+    constexpr float kTolerance = 1e-3f;
+    std::uintptr_t found = 0;
+
+    for (const std::uintptr_t hit : hits) {
+        const std::uintptr_t target = mem::resolve_rip_relative(hit, kDispOffset, kMovssLength);
+        if (!readable(target, sizeof(float))) {
+            continue;
+        }
+        if (std::fabs(read_float(target) - display_aspect) > kTolerance) {
+            continue;
+        }
+        ++g_aspect_candidates;
+        found = hit;
+        logger::info("safearea: aspect getter candidate 0x{:016X} -> global 0x{:016X} = {:.6f}",
+                     hit, target, read_float(target));
+    }
+
+    if (g_aspect_candidates != 1) {
+        logger::info("safearea: {} getter(s) read {:.6f} -- need exactly one, not patching",
+                     g_aspect_candidates, display_aspect);
+        return false;
+    }
+
+    // Ten bytes have to be ours. The tenth is padding behind the ret; if it is
+    // neither int3 nor nop we are looking at something else and stop.
+    const auto tail = *reinterpret_cast<const std::uint8_t*>(found + kAspectPatchSize - 1);
+    if (tail != 0x90 && tail != 0xCC) {
+        logger::info("safearea: byte behind the aspect getter is 0x{:02X}, not padding -- not patching",
+                     tail);
+        return false;
+    }
+
+    g_aspect_site = found;
+    std::memcpy(g_aspect_original.data(), reinterpret_cast<const void*>(found),
+                g_aspect_original.size());
+    logger::info("safearea: aspect probe ready at 0x{:016X}", found);
+    return true;
+}
+
+bool set_aspect_pretend_16_9(bool on) {
+    if (g_aspect_site == 0) {
+        return false;
+    }
+    if (on == g_aspect_flat) {
+        return true;
+    }
+
+    std::array<std::uint8_t, kAspectPatchSize> bytes = g_aspect_original;
+    if (on) {
+        const float value = 16.0f / 9.0f;
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+
+        bytes[0] = 0xB8;  // mov eax, imm32
+        std::memcpy(&bytes[1], &bits, sizeof(bits));
+        bytes[5] = 0x66;  // movd xmm0, eax
+        bytes[6] = 0x0F;
+        bytes[7] = 0x6E;
+        bytes[8] = 0xC0;
+        bytes[9] = 0xC3;  // ret
+    }
+
+    if (!write_bytes(g_aspect_site, bytes.data(), bytes.size())) {
+        logger::info("safearea: could not write the aspect patch");
+        return false;
+    }
+    g_aspect_flat = on;
+    logger::info("safearea: aspect reported as {}", on ? "16:9" : "the real display aspect");
+    return true;
+}
+
+bool aspect_pretending() { return g_aspect_flat; }
+
+int aspect_count() { return g_aspect_candidates; }
+
 void restore() {
     if (g_flat) {
         set_flat(false);
+    }
+    if (g_aspect_flat) {
+        set_aspect_pretend_16_9(false);
     }
 }
 
