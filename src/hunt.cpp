@@ -289,18 +289,42 @@ void find_known_values(const mem::Region& search_area, std::uintptr_t module_bas
 
         logger::info("{}: {} as float, {} as int32", needle.what, as_float.size(), as_int.size());
 
-        // Only list the rare ones. A value with hundreds of hits is a constant
-        // that happens to be common and says nothing.
-        const auto list = [&](const char* kind, const std::vector<std::uintptr_t>& hits) {
+        // Only the rare ones are worth listing, and worth dumping. A value with
+        // hundreds of hits is a common constant and says nothing.
+        //
+        // The neighbourhood is what actually cracks these: the letterbox struct
+        // gave up its meaning the moment the fields around the anchor were read
+        // side by side. A rect is unlikely to be alone -- expect the other
+        // dimension, an origin, maybe a scale, within a few words.
+        const auto list = [&](const char* kind, const std::vector<std::uintptr_t>& hits,
+                              bool dump_neighbours) {
             if (hits.empty() || hits.size() > 12) {
                 return;
             }
             for (const auto hit : hits) {
                 logger::info("    {} module +0x{:X}", kind, hit - module_base);
+                if (!dump_neighbours) {
+                    continue;
+                }
+                constexpr std::ptrdiff_t kBefore = 8 * 4;
+                constexpr std::ptrdiff_t kAfter = 8 * 4;
+                const std::uintptr_t from = hit - kBefore;
+                if (!readable(from, kBefore + kAfter + 4)) {
+                    continue;
+                }
+                for (std::ptrdiff_t off = -kBefore; off <= kAfter; off += 4) {
+                    std::int32_t as_i = 0;
+                    float as_f = 0.0f;
+                    std::memcpy(&as_i, reinterpret_cast<const void*>(hit + off), sizeof(as_i));
+                    std::memcpy(&as_f, reinterpret_cast<const void*>(hit + off), sizeof(as_f));
+                    logger::info("        {:+4}  int {:<12}  float {:<14.5f}{}", off, as_i, as_f,
+                                 off == 0 ? "   <- the value" : "");
+                }
             }
         };
-        list("float", as_float);
-        list("int32", as_int);
+        // Dump around the rare ones only; 1090 had four hits, 2560 had ten.
+        list("float", as_float, as_float.size() <= 4);
+        list("int32", as_int, as_int.size() <= 4);
     }
 
     logger::info("=== search done ===");
