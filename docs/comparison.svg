@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 392 690" width="392" height="690"
+     font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" role="img"
+     aria-label="Three 21:9 frames comparing the game's letterboxed cutscene, a bar-removal-only mod, and this fix.">
+
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"    stop-color="#0e1730"/>
+      <stop offset="0.42" stop-color="#3b3159"/>
+      <stop offset="0.74" stop-color="#9c5548"/>
+      <stop offset="1"    stop-color="#e0954f"/>
+    </linearGradient>
+
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0"   stop-color="#ffd08a" stop-opacity="0.55"/>
+      <stop offset="1"   stop-color="#ffd08a" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- The whole 21:9 frame, and the 2560x1090 window the game frames the shot in. -->
+    <clipPath id="clipFrame"><rect x="0" y="0" width="344" height="144"/></clipPath>
+    <clipPath id="clipWindow"><rect x="44" y="17.5" width="256" height="109"/></clipPath>
+
+    <!-- One scene, drawn once, centred on (0,0). Each panel differs only in how
+         much of it is shown and at what scale, which is exactly the point. -->
+    <g id="scene">
+      <rect x="-180" y="-80" width="360" height="106" fill="url(#sky)"/>
+      <circle cx="-40" cy="-6" r="34" fill="url(#glow)"/>
+      <circle cx="-40" cy="-6" r="11" fill="#f7cd83"/>
+
+      <path d="M-180 10 C-140 2 -108 14 -74 9 C-40 4 -12 15 22 10 C58 4 96 14 132 8 C154 4 168 9 180 6 L180 26 L-180 26 Z"
+            fill="#2b2340"/>
+      <path d="M-180 19 C-146 13 -120 22 -88 18 C-52 13 -20 23 16 19 C56 14 92 23 128 18 C152 15 168 20 180 17 L180 26 L-180 26 Z"
+            fill="#1d1830"/>
+      <rect x="-180" y="26" width="360" height="54" fill="#150f1a"/>
+      <path d="M-180 30 C-120 34 -60 29 0 33 C60 37 120 30 180 34 L180 40 L-180 40 Z" fill="#100b14" opacity="0.8"/>
+
+      <!-- Inside the framed window: the subject the shot is composed around. -->
+      <g fill="#0b070e">
+        <rect x="12.4" y="17.6" width="1.7" height="8.6"/>
+        <rect x="16.6" y="17.6" width="1.7" height="8.6"/>
+        <rect x="24.2" y="17.6" width="1.7" height="8.6"/>
+        <rect x="28.4" y="17.6" width="1.7" height="8.6"/>
+        <ellipse cx="21" cy="14.6" rx="10.2" ry="4.7"/>
+        <path d="M11.4 12 Q6.2 12.6 5.2 20 Q9 15.2 12.2 15.2 Z"/>
+        <path d="M29 13 L33.2 5 L35.8 5.7 L32.2 14.2 Z"/>
+        <path d="M32.7 5.4 L38.6 3 L39.6 5.2 L34.2 7.7 Z"/>
+        <ellipse cx="20.6" cy="7.8" rx="2.7" ry="4.2"/>
+        <circle cx="20.6" cy="3.1" r="2.05"/>
+        <path d="M17.9 1.2 L23.3 1.2 L23.7 2.4 L17.5 2.4 Z"/>
+      </g>
+      <g fill="#0d0912">
+        <path d="M-64 26 L-62.4 14 L-60.8 26 Z"/>
+        <ellipse cx="-62.4" cy="13" rx="5.2" ry="4.4"/>
+        <path d="M74 26 L75.4 17 L76.8 26 Z"/>
+        <ellipse cx="75.4" cy="16.2" rx="4" ry="3.4"/>
+      </g>
+
+      <!-- Outside the framed window. The game renders all of it; the shot was
+           never composed to include any of it. Only the middle panel shows it. -->
+      <g fill="#0d0912">
+        <path d="M-154 26 L-151 -2 L-148 26 Z"/>
+        <ellipse cx="-151" cy="-4" rx="15" ry="12"/>
+        <ellipse cx="-162" cy="3" rx="9" ry="7"/>
+        <ellipse cx="-140" cy="4" rx="8.5" ry="6.5"/>
+
+        <rect x="136" y="10" width="26" height="11" rx="1.5"/>
+        <path d="M136 10 L140 3 L158 3 L162 10 Z"/>
+        <circle cx="142" cy="23" r="4.4"/>
+        <circle cx="157" cy="23" r="4.4"/>
+
+        <path d="M28 66 q7 -8 15 -1 q6 5 -1 7 l-16 0 q-4 -3 2 -6 Z"/>
+        <ellipse cx="-96" cy="60" rx="11" ry="4"/>
+      </g>
+      <g fill="none" stroke="#0d0912" stroke-width="1.5" stroke-linecap="round">
+        <path d="M-66 -62 q5 -4 9 0 q4 -4 9 0"/>
+        <path d="M-40 -70 q4 -3 7 0 q3 -3 7 0"/>
+      </g>
+    </g>
+
+    <g id="framedMark">
+      <rect x="44" y="17.5" width="256" height="109" fill="none"
+            stroke="#f0a94b" stroke-width="1" stroke-dasharray="5 4" opacity="0.85"/>
+    </g>
+  </defs>
+
+  <rect width="392" height="690" fill="#12151c"/>
+
+  <text x="24" y="26" fill="#e8eaf0" font-size="13.5" font-weight="600">Why &#8220;proper&#8221;</text>
+  <text x="24" y="41" fill="#8d94a6" font-size="9.5">Same shot, same 3440&#215;1440 screen. Only the camera differs.</text>
+
+  <!-- 1 -->
+  <g transform="translate(24,64)">
+    <circle cx="4" cy="-4.5" r="3.2" fill="#8d94a6"/>
+    <text x="13" y="-1" fill="#e8eaf0" font-size="11" font-weight="600">The game as shipped</text>
+    <rect x="0" y="8" width="344" height="144" fill="#000"/>
+    <g clip-path="url(#clipWindow)" transform="translate(0,8)">
+      <use href="#scene" transform="translate(172,72)"/>
+    </g>
+    <g transform="translate(0,8)"><use href="#framedMark"/></g>
+    <rect x="0" y="8" width="344" height="144" fill="none" stroke="#2a3040" stroke-width="1"/>
+    <text x="0" y="168" fill="#8d94a6" font-size="9.5">Bars on all four sides. The shot lives in the dashed 2560&#215;1090 window;</text>
+    <text x="0" y="180" fill="#8d94a6" font-size="9.5">the other 44&#37; of the screen is covered.</text>
+  </g>
+
+  <!-- 2 -->
+  <g transform="translate(24,266)">
+    <circle cx="4" cy="-4.5" r="3.2" fill="#d95c52"/>
+    <text x="13" y="-1" fill="#e8eaf0" font-size="11" font-weight="600">Other mods: bars removed</text>
+    <rect x="0" y="8" width="344" height="144" fill="#000"/>
+    <g clip-path="url(#clipFrame)" transform="translate(0,8)">
+      <use href="#scene" transform="translate(172,72)"/>
+    </g>
+    <g transform="translate(0,8)"><use href="#framedMark"/></g>
+    <rect x="0" y="8" width="344" height="144" fill="none" stroke="#2a3040" stroke-width="1"/>
+    <text x="0" y="168" fill="#8d94a6" font-size="9.5">The camera is untouched, so the freed screen fills up with scene that was</text>
+    <text x="0" y="180" fill="#8d94a6" font-size="9.5">never meant to be in frame. The subject shrinks inside a wider view.</text>
+  </g>
+
+  <!-- 3 -->
+  <g transform="translate(24,468)">
+    <circle cx="4" cy="-4.5" r="3.2" fill="#4fa86a"/>
+    <text x="13" y="-1" fill="#e8eaf0" font-size="11" font-weight="600">This fix: bars removed, framing kept</text>
+    <rect x="0" y="8" width="344" height="144" fill="#000"/>
+    <g clip-path="url(#clipFrame)" transform="translate(0,8)">
+      <use href="#scene" transform="translate(172,72) scale(1.34375)"/>
+    </g>
+    <g transform="translate(0,8)">
+      <rect x="0.5" y="0.5" width="343" height="143" fill="none"
+            stroke="#f0a94b" stroke-width="1" stroke-dasharray="5 4" opacity="0.85"/>
+    </g>
+    <rect x="0" y="8" width="344" height="144" fill="none" stroke="#2a3040" stroke-width="1"/>
+    <text x="0" y="168" fill="#8d94a6" font-size="9.5">The field of view is narrowed by exactly k = 0.744186, so the dashed window</text>
+    <text x="0" y="180" fill="#8d94a6" font-size="9.5">now <tspan font-weight="600" fill="#c7ccd8">is</tspan> the screen. Same composition as intended, no bars, nothing extra.</text>
+  </g>
+
+  <text x="24" y="678" fill="#5d6472" font-size="9">Schematic, not a screenshot: the proportions are to scale, the artwork is not the game.</text>
+</svg>

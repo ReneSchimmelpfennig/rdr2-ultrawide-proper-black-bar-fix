@@ -8,6 +8,8 @@ On ultrawide the game boxes cutscenes in on **all four sides** -- pillarbox left
 and right, letterbox top and bottom. At 3440x1440 that is 440 px of side bar and
 175 px of top bar, leaving 2560x1090 of a 3440x1440 screen. All of it goes.
 
+![Three 21:9 frames: the game as shipped with bars, a bar-removal-only mod showing extra scene, and this fix showing the original framing across the full screen](docs/comparison.svg)
+
 ## The problem
 
 On a 16:9 display, RDR2 renders cutscenes into a 16:9 window and crops it to
@@ -50,10 +52,21 @@ Press **F8** to bring the bars back. The field-of-view correction stays active,
 so you get correct framing inside the boxed-in frame — not the goal of this
 project, but a usable state until the 2D layer is sorted out.
 
-Zeroing the game's computed bar heights was tried and has no effect; the 2D
-layer takes its safe area from somewhere else. Tracking that down is a separate
-piece of reverse engineering of roughly the same size as the field-of-view work.
-Contributions welcome.
+Tracking that down is a separate piece of reverse engineering of roughly the
+same size as the field-of-view work, and it is not finished. What is settled so
+far, each of it measured rather than assumed:
+
+- the 2D layer lays out in a **16:9 box** (2560x1440 here), which cutscenes then
+  crop to 2.35:1. `1440 x 16/9 = 2560` exactly, so there is no cutscene-specific
+  rectangle to find
+- it does **not** take that box from the game's computed bar heights: those have
+  no consumer anywhere except drawing the bars, traced through xrefs
+- nor from the script native that exposes the bar height, patched to zero and
+  tested through a full cutscene
+- nor from the aspect ratio getter, patched to report 16:9 from startup
+
+[`docs/how-it-works.md`](docs/how-it-works.md) has the full list with the
+evidence, including what the next step should be. Contributions welcome.
 
 ## Requirements
 
@@ -118,6 +131,8 @@ measurement:
 - [`docs/packing.md`](docs/packing.md) — RDR2.exe is Arxan-packed, so nothing can
   be found in the file on disk; the plugin dumps the decrypted image out of the
   running process for analysis
+- [`docs/next-session.md`](docs/next-session.md) — the plan for the 2D layer, and
+  why the approaches so far all failed the same way
 
 The "what did not work" list is the part worth reading before touching this:
 hooking the FOV getter, overwriting the master global, and searching for the
