@@ -504,12 +504,12 @@ DWORD WINAPI worker(LPVOID) {
                 // implausible-k fallback above computes k from the resolution
                 // instead. So the picture stays as it always was and any change
                 // to the 2D layer is attributable.
-                logger::info("");
-                logger::info("TEST BUILD: pretending the display is 16:9 from startup.");
-                logger::info("  Ctrl+Alt+A returns to the real aspect.");
-                logger::info("  Do not press F8 in this mode -- with a degenerate bar height the");
-                logger::info("  bars would cover the screen.");
-                safearea::set_aspect_pretend_16_9(true);
+                // Measured with this on from startup: no effect on the 2D
+                // layer. Off again, so the shipped behaviour is the plain fix.
+                // Ctrl+Alt+A still arms it for anyone wanting to repeat the
+                // measurement -- but note it drives the bar height to a
+                // degenerate 1.0, which makes F8 cover the screen.
+                logger::info("safearea: aspect probe armed but inactive (Ctrl+Alt+A)");
             }
 
             // On its own thread. It used to run here and block for an hour,
