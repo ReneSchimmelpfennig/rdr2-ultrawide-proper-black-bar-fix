@@ -120,11 +120,28 @@ coincidence: three of the four hits for 1090 sit inside an ascending index table
 440s sit among 680, 582.5, 497.5 in what looks like a distance table. The hit
 list also changed between two runs.
 
-**Conclusion.** The geometry is computed per frame and never stored where it can
-be found or patched. Reaching it would mean intercepting vertex data or uniform
-buffers on the graphics API -- a Vulkan-only undertaking of its own size, and
-one that would have to be built twice to keep DX12 working. Out of proportion to
-a cosmetic fault with a working fallback.
+**The constant buffers.** Every constant buffer bound to every draw that writes
+the final image, scanned word by word as float and as int32, including the
+reciprocals a shader would use for a screen size. 91 matches, so the scan
+demonstrably worked -- and **2560 and 1090 do not occur once**. What the shaders
+are told is the *full* screen: 3440 and 1440 appear 30 times between them, their
+reciprocals 38 times.
+
+Getting there took three attempts, and the first two reported "nothing found"
+while reading zero bytes: the accessor is named differently in this version of
+RenderDoc, and the errors were being swallowed. A tool that cannot say how much
+it examined cannot produce a negative result. It counts now.
+
+**Where that leaves it.** The shaders know the real screen size, so nothing is
+telling the 2D layer to occupy only part of it -- the vertices must already
+arrive scaled down. Vertex positions for 2D elements are computed on the CPU,
+which puts the cause back in game code rather than in the renderer, and makes it
+reachable by the same means as the field of view.
+
+The untried lead: `GetAspectRatio()` at `+0x173964` has fifteen callers. They
+were read once, during the FOV hunt, and dismissed as "only aspect ratios" --
+which is precisely what aspect-driven 2D layout looks like. They deserve a
+second reading with the right question in mind.
 
 Press **F8** to bring the bars back. The field-of-view correction stays active.
 
