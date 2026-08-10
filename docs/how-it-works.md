@@ -201,8 +201,38 @@ enough for `mov eax, imm32; movd xmm0, eax; ret`. `safearea::init_aspect()`
 finds it by the value it reads rather than by a byte signature and refuses to
 patch unless exactly one getter matches. Ctrl+Alt+A toggles it.
 
-It is a probe, not a candidate fix: it feeds fifteen callers and flattens the
-bars as a side effect, since the pillarbox term goes to zero.
+It is a probe, not a candidate fix: it feeds fifteen callers and disturbs the
+bars as a side effect.
+
+**What it measured.** The patch reaches the letterbox maths exactly as the
+decompilation predicted -- confirmed end to end, from the struct rather than
+from the picture:
+
+```
+before   bar(display) 0.127907   k  0.74419
+after    bar(display) 1.000000   k -1.00000
+```
+
+Not zero, though. At a true 16:9 the pillarbox term computes to zero and the
+game substitutes 1.0 for it:
+
+```c
+if (weight > 1e-06) {
+    if (bar(2.35)    == 0.0) bar(2.35)    = 1.0;
+    if (bar(display) == 0.0) bar(display) = 1.0;
+}
+```
+
+Nothing of that was visible, for two good reasons: the bars are patched off
+anyway, and `k = -1` fails the plausibility check in `fov.cpp`, which falls back
+to computing `k` from the resolution. The correction therefore carried on
+unchanged.
+
+So the aspect getter demonstrably drives the letterbox. Whether it also drives
+the 2D layout is still open, because every test so far toggled it *during* a
+cutscene -- which can only answer whether the aspect is read per frame. If the
+2D layer sizes itself once, when the cutscene is built, no later toggle can
+reach it. The probe now defaults to on at startup for that reason.
 
 Press **F8** to bring the bars back. The field-of-view correction stays active.
 

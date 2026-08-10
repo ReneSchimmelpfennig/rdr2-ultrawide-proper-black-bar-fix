@@ -491,7 +491,26 @@ DWORD WINAPI worker(LPVOID) {
             // enough to find a global, and it is logged either way.
             const float display_aspect = static_cast<float>(GetSystemMetrics(SM_CXSCREEN)) /
                                          static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
-            safearea::init_aspect(mem::executable_sections(module), display_aspect, module.base);
+            if (safearea::init_aspect(mem::executable_sections(module), display_aspect,
+                                      module.base)) {
+                // On from the start, not from a key. Toggling mid-cutscene only
+                // answers whether the aspect is read *per frame*; if the 2D
+                // layer sizes itself once when the cutscene is built, a later
+                // toggle can never reach it. This way the layout is built under
+                // the faked aspect in the first place.
+                //
+                // The field of view survives it: the faked aspect drives the bar
+                // height to a degenerate 1.0, k comes out negative, and the
+                // implausible-k fallback above computes k from the resolution
+                // instead. So the picture stays as it always was and any change
+                // to the 2D layer is attributable.
+                logger::info("");
+                logger::info("TEST BUILD: pretending the display is 16:9 from startup.");
+                logger::info("  Ctrl+Alt+A returns to the real aspect.");
+                logger::info("  Do not press F8 in this mode -- with a degenerate bar height the");
+                logger::info("  bars would cover the screen.");
+                safearea::set_aspect_pretend_16_9(true);
+            }
 
             // On its own thread. It used to run here and block for an hour,
             // which meant everything below -- every diagnostic tool -- was
