@@ -345,6 +345,12 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("hotkey window closed");
 }
 
+DWORD WINAPI hotkey_thread(LPVOID) {
+    constexpr unsigned int kHotkeyMs = 60 * 60 * 1000;
+    run_hotkeys(kHotkeyMs);
+    return 0;
+}
+
 DWORD WINAPI worker(LPVOID) {
     logger::open(g_self);
     logger::info("log file: {}", logger::path().empty()
@@ -397,8 +403,15 @@ DWORD WINAPI worker(LPVOID) {
         } else if (fov_ready && fov_config.mode == fov::Mode::Corrected) {
             bars::init(g_anchor_store);
             bars::set_hidden(true);  // the framing cannot be judged with them on
-            constexpr unsigned int kHotkeyMs = 60 * 60 * 1000;
-            run_hotkeys(kHotkeyMs);
+
+            // On its own thread. It used to run here and block for an hour,
+            // which meant everything below -- every diagnostic tool -- was
+            // unreachable in the one mode people actually run. A marker file
+            // sat there being ignored and the search it asked for never
+            // happened.
+            if (HANDLE keys = CreateThread(nullptr, 0, hotkey_thread, nullptr, 0, nullptr)) {
+                CloseHandle(keys);
+            }
         } else if (fov_ready && (fov_config.mode == fov::Mode::Watch ||
                                  fov_config.mode == fov::Mode::TestWatch)) {
             // 90 s, because this pass needs the player to actively make the

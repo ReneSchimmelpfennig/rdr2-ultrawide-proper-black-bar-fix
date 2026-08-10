@@ -268,10 +268,30 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // step of twice the usual size. Remembering which structure was the
         // rendered one carries the correction across that gap; it is handed on
         // as soon as another structure genuinely matches.
-        if (matches) {
+        if (matches && g_render_slot.load(std::memory_order_relaxed) == kNoSlot) {
             g_render_slot.store(slot, std::memory_order_relaxed);
         }
-        is_rendered = matches || g_render_slot.load(std::memory_order_relaxed) == slot;
+
+        // Exactly one destination may be the rendered camera, and only it may be
+        // corrected. Accepting every destination whose value matches the shader
+        // constant looked equivalent and is not: after the first correction the
+        // corrected value travels onwards, the next destination now carries it,
+        // matches too, and gets corrected again. The log showed the chain --
+        // 37.0 to 27.96 in one call, 27.96 to 21.0 in the next.
+        is_rendered = g_render_slot.load(std::memory_order_relaxed) == slot;
+
+        // Hand the role over when this really is the rendered one and the
+        // current holder has stopped matching -- the camera does change.
+        if (matches && !is_rendered) {
+            const std::size_t holder = g_render_slot.load(std::memory_order_relaxed);
+            if (holder < kMaxDestinations) {
+                const float held = g_dst_last_final[holder].load(std::memory_order_relaxed);
+                if (std::fabs(held - shader) > std::fabs(shader) * kShaderMatch) {
+                    g_render_slot.store(slot, std::memory_order_relaxed);
+                    is_rendered = true;
+                }
+            }
+        }
 
         // Bookkeeping for the report only.
         g_dst_shader_samples[slot].fetch_add(1, std::memory_order_relaxed);

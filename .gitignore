@@ -32,3 +32,6 @@ dumps/
 
 # Interne Arbeitsdatei: enthaelt Maschinenumgebung und Pfade
 CLAUDE.md
+
+# Spiel-Screenshots gehoeren nicht ins Repository
+tools/*.png
