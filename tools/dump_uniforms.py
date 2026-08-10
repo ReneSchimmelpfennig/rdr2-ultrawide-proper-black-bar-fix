@@ -107,16 +107,24 @@ def scan_bytes(blob):
     return found
 
 
+# Counters, so a null result can be told apart from a null attempt. The previous
+# version swallowed every error and reported "nothing matched" -- which would
+# have looked identical to reading no buffers at all.
+STATS = {"blocks": 0, "read": 0, "bytes": 0, "errors": []}
+
+
 def buffers_for(controller, pipe, stage):
     """Every constant buffer bound to this stage, as raw bytes."""
     out = []
     try:
         refl = pipe.GetShaderReflection(stage)
-    except Exception:
+    except Exception as exc:
+        STATS["errors"].append("GetShaderReflection: %s" % exc)
         return out
     if not refl:
         return out
     for index, block in enumerate(refl.constantBlocks):
+        STATS["blocks"] += 1
         try:
             bound = pipe.GetConstantBuffer(stage, index, 0)
             if bound.resourceId == rd.ResourceId.Null():
@@ -125,8 +133,15 @@ def buffers_for(controller, pipe, stage):
             if size == 0 or size > 65536:
                 size = min(block.byteSize or 4096, 65536)
             data = controller.GetBufferData(bound.resourceId, bound.byteOffset, size)
-            out.append((block.name or ("cb%d" % index), bytes(data)))
-        except Exception:
+            blob = bytes(data)
+            if not blob:
+                continue
+            STATS["read"] += 1
+            STATS["bytes"] += len(blob)
+            out.append((block.name or ("cb%d" % index), blob))
+        except Exception as exc:
+            if len(STATS["errors"]) < 5:
+                STATS["errors"].append("GetConstantBuffer/GetBufferData: %s" % exc)
             continue
     return out
 
@@ -137,6 +152,7 @@ def collect(controller):
     lines.append("draws: %d" % len(actions))
 
     examined = 0
+    samples = []
     for action in actions:
         eid = event_id(action)
         controller.SetFrameEvent(eid, False)
@@ -157,6 +173,7 @@ def collect(controller):
         for stage, label in ((rd.ShaderStage.Vertex, "vertex"),
                              (rd.ShaderStage.Pixel, "pixel")):
             for name, blob in buffers_for(controller, pipe, stage):
+                samples.append((eid, "%s %s" % (label, name), blob))
                 for offset, kind, value, meaning in scan_bytes(blob):
                     hits.append((label, name, offset, kind, value, meaning))
 
@@ -169,8 +186,30 @@ def collect(controller):
 
     lines.append("")
     lines.append("examined %d draws writing the final image" % examined)
-    if examined and len(lines) < 6:
-        lines.append("nothing matched -- the 2D layer is not told its size this way")
+    lines.append("constant blocks seen: %d, actually read: %d, bytes: %d" %
+                 (STATS["blocks"], STATS["read"], STATS["bytes"]))
+    for err in STATS["errors"]:
+        lines.append("  error: %s" % err)
+
+    if STATS["read"] == 0:
+        lines.append("")
+        lines.append("NOTHING WAS READ -- this says nothing about the 2D layer, only that the")
+        lines.append("buffers could not be fetched. Do not read it as a negative result.")
+
+    # Raw contents of a few draws, so the answer does not depend on my guessing
+    # the right target values. Screen geometry is recognisable by eye.
+    lines.append("")
+    lines.append("=== raw contents of the last few final-image draws ===")
+    for eid, name, blob in samples[-6:]:
+        lines.append("")
+        lines.append("event %d  %s  (%d bytes)" % (eid, name, len(blob)))
+        words = min(len(blob) // 4, 32)
+        for i in range(words):
+            word = blob[i * 4:(i + 1) * 4]
+            as_float = struct.unpack("<f", word)[0]
+            as_int = struct.unpack("<i", word)[0]
+            lines.append("    +0x%-4X  float %-16.5f int %d" % (i * 4, as_float, as_int))
+
     return "\n".join(lines)
 
 
