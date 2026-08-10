@@ -19,6 +19,7 @@
 #include "mem.h"
 #include "patterns.h"
 #include "safearea.h"
+#include "uibox.h"
 #include "watchpoint.h"
 
 namespace {
@@ -327,6 +328,7 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F7   correction on / off");
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("  Ctrl+Alt+U   16:9 boxing of the UI on / off  [2D test]");
     logger::info("  Ctrl+Alt+A   report the display as 16:9  [2D test -- also flattens the bars]");
     logger::info("  Ctrl+Alt+S   report the bar height as zero to the script layer  [2D test]");
     logger::info("  Ctrl+Alt+B   zero the bar heights (test: do the artefacts go away?)");
@@ -347,6 +349,7 @@ void run_hotkeys(unsigned int duration_ms) {
     bool search_key = false;  // Ctrl+Alt+F
     bool safe_key = false;    // Ctrl+Alt+S
     bool aspect_key = false;  // Ctrl+Alt+A
+    bool uibox_key = false;   // Ctrl+Alt+U
     bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
 
     const auto combo_pressed = [](int vk, bool& was_down) {
@@ -364,6 +367,15 @@ void run_hotkeys(unsigned int duration_ms) {
         if (combo_pressed('F', search_key)) {
             g_request_2d_search.store(true);
             logger::info("Ctrl+Alt+F: 2D geometry search requested");
+        }
+        if (combo_pressed('U', uibox_key)) {
+            logger::info("Ctrl+Alt+U pressed");
+            if (!uibox::found()) {
+                logger::info("  ... but the site was never found -- nothing changed, so an");
+                logger::info("      unchanged picture says nothing here");
+            }
+            uibox::set_disabled(!uibox::disabled());
+            uibox::verify();
         }
         if (combo_pressed('A', aspect_key)) {
             logger::info("Ctrl+Alt+A pressed");
@@ -512,6 +524,20 @@ DWORD WINAPI worker(LPVOID) {
                 logger::info("safearea: aspect probe armed but inactive (Ctrl+Alt+A)");
             }
 
+            // The eighth attempt at the 2D layer, and the first holding the
+            // transform itself instead of a value suspected of feeding it.
+            // On from startup so the layout is built without the boxing in the
+            // first place -- toggling mid-cutscene only answers whether it is
+            // applied per frame.
+            if (uibox::init(mem::executable_sections(module))) {
+                logger::info("");
+                logger::info("TEST BUILD: the UI's 16:9 boxing is disabled from startup.");
+                logger::info("  Ctrl+Alt+U toggles it. The gameplay HUD goes through the same");
+                logger::info("  path, so expect it to move too -- that is information, not a bug.");
+                uibox::set_disabled(true);
+                uibox::verify();
+            }
+
             // On its own thread. It used to run here and block for an hour,
             // which meant everything below -- every diagnostic tool -- was
             // unreachable in the one mode people actually run. A marker file
@@ -606,6 +632,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         }
     } else if (reason == DLL_PROCESS_DETACH) {
         fov::uninstall();
+        uibox::restore();
         safearea::restore();
         bars::restore();
         MH_Uninitialize();

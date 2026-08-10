@@ -139,6 +139,30 @@ inline constexpr float kExpectedGameplayValue = 45.0f;
 
 }  // namespace candidates
 
+// void ApplyUiBox(float* pos, float* size, bool useWindow)
+//
+// The transform that squeezes the UI into a 16:9 box on a wider display:
+//
+//     if (aspect > 16/9) {
+//         k     = (16/9) / aspect;             // 0.744186 at 3440x1440
+//         *pos  = 0.5 - (0.5 - *pos) * k;      // == *pos * k + (1-k)/2
+//         *size = *size * k;
+//     }
+//
+// It sends 0 to 0.127907, 0.5 to 0.5 and 1 to 0.872093 -- the exact inverse of
+// `FUN_7ff675604f38`, which maps the box back onto the screen. The aspect comes
+// from its own computation over the backbuffer size, which is why patching the
+// aspect *getter* never reached this.
+//
+// Called from one place, which is in turn reachable as a script native, so this
+// is the path script-drawn 2D takes. That makes it the first real candidate for
+// the cutscene 2D layout since the investigation began.
+//
+// The signature stops before the call displacement, so it contains no
+// build-specific bytes. One hit in the image.
+inline constexpr std::string_view kUiBoxTransform =
+    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 41 8A F0 41 8A C8";
+
 // A function prologue, also taken from RDR2NoBlackBars.asi. Purpose still
 // unconfirmed; resolves to exactly one address on this build.
 inline constexpr std::string_view kUnknownPrologue =
