@@ -2,6 +2,7 @@
 
 #include <MinHook.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -26,6 +27,15 @@ HMODULE g_self = nullptr;
 // Address of the `C6 05 ... FF` instruction itself. The letterbox patch needs
 // the instruction, the struct lookup needs what it points at.
 std::uintptr_t g_anchor_store = 0;
+
+// Diagnostics are requested by key, not by file.
+//
+// The game process cannot see files other processes create in its own log
+// directory -- the log itself lists the directory contents and my marker files
+// are simply absent from that listing, twice now. Whatever causes that, a
+// marker file is not a usable switch, and two sessions were spent waiting for
+// searches that could never start.
+std::atomic<bool> g_request_2d_search{false};
 
 // Refuse to do anything if we somehow got loaded into a different process --
 // every signature in patterns.h is specific to RDR2.exe.
@@ -280,6 +290,7 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
     logger::info("  Ctrl+Alt+B   zero the bar heights (test: do the artefacts go away?)");
+    logger::info("  Ctrl+Alt+F   search memory for the 2D geometry (do this in a cutscene)");
     logger::info("  F11  force the correction in gameplay (for still comparisons)");
     logger::info("  F12  set strength to exactly 1.00");
     logger::info("current: strength {:.2f}, bars {}", fov::strength(),
@@ -291,7 +302,8 @@ void run_hotkeys(unsigned int duration_ms) {
         was_down = down;
         return edge;
     };
-    bool bars_key = false;  // Ctrl+Alt+B; not F6, that is RDR2's photo mode
+    bool bars_key = false;    // Ctrl+Alt+B; not F6, that is RDR2's photo mode
+    bool search_key = false;  // Ctrl+Alt+F
     bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
 
     const auto combo_pressed = [](int vk, bool& was_down) {
@@ -306,6 +318,10 @@ void run_hotkeys(unsigned int duration_ms) {
 
     const DWORD started = GetTickCount();
     while (GetTickCount() - started < duration_ms) {
+        if (combo_pressed('F', search_key)) {
+            g_request_2d_search.store(true);
+            logger::info("Ctrl+Alt+F: 2D geometry search requested");
+        }
         if (combo_pressed('B', bars_key)) {
             fov::set_flatten_bars(!fov::flattening_bars());
             logger::info("Ctrl+Alt+B: bar heights zeroed {}",
@@ -459,16 +475,24 @@ DWORD WINAPI worker(LPVOID) {
         } else if (std::filesystem::exists(rerun, ec) && data) {
             logger::info("'rerun-hunt' found -- running the differential search again");
             hunt::run(data, weight, module.base, kTimeoutMs);
-        } else if (std::filesystem::exists(geometry_marker, ec) && data) {
-            logger::info("'find-2d' found -- searching for the known 2D geometry");
-            hunt::find_known_values(data, module.base, weight, kTimeoutMs);
         } else if (std::filesystem::exists(watch_marker, ec)) {
             logger::info("'watch-candidates' found -- watching the known addresses");
             hunt::watch(module.base, weight, kTimeoutMs);
         }
-    }
 
-    logger::info("running");
+        logger::info("running -- Ctrl+Alt+F in a cutscene starts the 2D geometry search");
+
+        // Serve key-triggered diagnostics for as long as the game runs. The
+        // marker files above stay for the tools nobody needs mid-session, but
+        // anything that has to be triggered while playing goes by key: the game
+        // process cannot see files created by other processes here.
+        while (data) {
+            if (g_request_2d_search.exchange(false)) {
+                hunt::find_known_values(data, module.base, weight, 60 * 1000);
+            }
+            Sleep(200);
+        }
+    }
     logger::close();
     return 0;
 }

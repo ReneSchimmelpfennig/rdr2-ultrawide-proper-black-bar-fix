@@ -268,30 +268,19 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // step of twice the usual size. Remembering which structure was the
         // rendered one carries the correction across that gap; it is handed on
         // as soon as another structure genuinely matches.
-        if (matches && g_render_slot.load(std::memory_order_relaxed) == kNoSlot) {
+        // Back to the form that demonstrably produced a correct picture.
+        //
+        // Restricting this to the single remembered slot was meant to stop the
+        // correction chaining from one camera state into the next. It stopped
+        // the correction altogether: the slot is claimed once and then never
+        // matches again, so nothing gets corrected and the picture flickers
+        // between corrected and untouched. A fix that silences the feature is
+        // worse than the fault it was aimed at, so it goes back until the
+        // decisions have actually been measured rather than guessed at.
+        if (matches) {
             g_render_slot.store(slot, std::memory_order_relaxed);
         }
-
-        // Exactly one destination may be the rendered camera, and only it may be
-        // corrected. Accepting every destination whose value matches the shader
-        // constant looked equivalent and is not: after the first correction the
-        // corrected value travels onwards, the next destination now carries it,
-        // matches too, and gets corrected again. The log showed the chain --
-        // 37.0 to 27.96 in one call, 27.96 to 21.0 in the next.
-        is_rendered = g_render_slot.load(std::memory_order_relaxed) == slot;
-
-        // Hand the role over when this really is the rendered one and the
-        // current holder has stopped matching -- the camera does change.
-        if (matches && !is_rendered) {
-            const std::size_t holder = g_render_slot.load(std::memory_order_relaxed);
-            if (holder < kMaxDestinations) {
-                const float held = g_dst_last_final[holder].load(std::memory_order_relaxed);
-                if (std::fabs(held - shader) > std::fabs(shader) * kShaderMatch) {
-                    g_render_slot.store(slot, std::memory_order_relaxed);
-                    is_rendered = true;
-                }
-            }
-        }
+        is_rendered = matches || g_render_slot.load(std::memory_order_relaxed) == slot;
 
         // Bookkeeping for the report only.
         g_dst_shader_samples[slot].fetch_add(1, std::memory_order_relaxed);
@@ -325,14 +314,19 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // Only the rendered camera is interesting, and there are two dozen
         // states per frame -- logging all of them filled the budget inside a
         // single transition last time, so the second one went unobserved.
+        // Log the first stretch of decisions in every cutscene, not only during
+        // a ramp and not only the corrections. Two regressions in a row were
+        // diagnosed from logs that only recorded what I had already decided to
+        // keep -- the rejected calls are where the answer was both times.
         const bool in_transition = weight > 0.0f && weight < 0.999f;
-        if (kLogEveryDecision && in_transition && is_rendered &&
-            g_samples.load() < kMaxSamples) {
+        const bool worth_logging = weight > 0.0f && g_samples.load() < kMaxSamples;
+        if ((kLogEveryDecision || g_samples.load() < 120) && worth_logging) {
             g_samples.fetch_add(1);
             logger::info(
-                "  {:<8} dst 0x{:012X}  w {:.4f}  in {:9.4f}  prev {:9.4f}  shader {:9.4f}"
-                "  -> {:9.4f}",
-                decision, dst, weight, original, previous_now, shader_now, final_value);
+                "  {:<8} slot {:<3} dst 0x{:012X}  w {:.4f}  in {:9.4f}  prev {:9.4f}"
+                "  shader {:9.4f}  -> {:9.4f}{}",
+                decision, slot == kNoSlot ? -1 : static_cast<int>(slot), dst, weight, original,
+                previous_now, shader_now, final_value, in_transition ? "  [ramp]" : "");
         }
     };
 
