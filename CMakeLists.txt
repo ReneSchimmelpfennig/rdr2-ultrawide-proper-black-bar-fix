@@ -65,6 +65,8 @@ add_library(${PROJECT_NAME} SHARED
     src/log.h
     src/mem.cpp
     src/mem.h
+    src/safearea.cpp
+    src/safearea.h
     src/patterns.h
     src/framing.h)
 

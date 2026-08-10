@@ -18,6 +18,7 @@
 #include "log.h"
 #include "mem.h"
 #include "patterns.h"
+#include "safearea.h"
 #include "watchpoint.h"
 
 namespace {
@@ -289,12 +290,14 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F7   correction on / off");
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("  Ctrl+Alt+S   report the bar height as zero to the script layer  [2D test]");
     logger::info("  Ctrl+Alt+B   zero the bar heights (test: do the artefacts go away?)");
     logger::info("  Ctrl+Alt+F   search memory for the 2D geometry (do this in a cutscene)");
     logger::info("  F11  force the correction in gameplay (for still comparisons)");
     logger::info("  F12  set strength to exactly 1.00");
-    logger::info("current: strength {:.2f}, bars {}", fov::strength(),
-                 bars::hidden() ? "hidden" : "visible");
+    logger::info("current: strength {:.2f}, bars {}, safe area {} ({} getter(s))", fov::strength(),
+                 bars::hidden() ? "hidden" : "visible", safearea::flat() ? "flattened" : "original",
+                 safearea::count());
 
     const auto pressed = [](int vk, bool& was_down) {
         const bool down = (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -304,6 +307,7 @@ void run_hotkeys(unsigned int duration_ms) {
     };
     bool bars_key = false;    // Ctrl+Alt+B; not F6, that is RDR2's photo mode
     bool search_key = false;  // Ctrl+Alt+F
+    bool safe_key = false;    // Ctrl+Alt+S
     bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
 
     const auto combo_pressed = [](int vk, bool& was_down) {
@@ -321,6 +325,9 @@ void run_hotkeys(unsigned int duration_ms) {
         if (combo_pressed('F', search_key)) {
             g_request_2d_search.store(true);
             logger::info("Ctrl+Alt+F: 2D geometry search requested");
+        }
+        if (combo_pressed('S', safe_key)) {
+            safearea::set_flat(!safearea::flat());
         }
         if (combo_pressed('B', bars_key)) {
             fov::set_flatten_bars(!fov::flattening_bars());
@@ -420,6 +427,12 @@ DWORD WINAPI worker(LPVOID) {
             bars::init(g_anchor_store);
             bars::set_hidden(true);  // the framing cannot be judged with them on
 
+            // The 2D experiment, on by default so that one cutscene answers the
+            // question. Ctrl+Alt+S turns it off again for the comparison.
+            if (safearea::init(mem::executable_sections(module), anchor)) {
+                safearea::set_flat(true);
+            }
+
             // On its own thread. It used to run here and block for an hour,
             // which meant everything below -- every diagnostic tool -- was
             // unreachable in the one mode people actually run. A marker file
@@ -514,6 +527,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         }
     } else if (reason == DLL_PROCESS_DETACH) {
         fov::uninstall();
+        safearea::restore();
+        bars::restore();
         MH_Uninitialize();
         logger::close();
     }
