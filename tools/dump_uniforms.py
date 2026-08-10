@@ -113,6 +113,32 @@ def scan_bytes(blob):
 STATS = {"blocks": 0, "read": 0, "bytes": 0, "errors": [], "accessor": "none"}
 
 
+def unpack_binding(bound):
+    """Resource, offset and size out of whatever the accessor returned.
+
+    Newer RenderDoc hands back a UsedDescriptor wrapping a Descriptor; older
+    versions returned the fields directly. Guessing wrong looks exactly like a
+    negative result, so try the known shapes and report the object's actual
+    fields if none of them fit.
+    """
+    shapes = (
+        lambda b: (b.descriptor.resource, b.descriptor.byteOffset, b.descriptor.byteSize),
+        lambda b: (b.descriptor.resourceId, b.descriptor.byteOffset, b.descriptor.byteSize),
+        lambda b: (b.resourceId, b.byteOffset, b.byteSize),
+        lambda b: (b.resource, b.byteOffset, b.byteSize),
+    )
+    for shape in shapes:
+        try:
+            return shape(bound)
+        except Exception:
+            continue
+    if len(STATS["errors"]) < 5:
+        fields = [n for n in dir(bound) if not n.startswith("_")]
+        STATS["errors"].append("binding shape unknown; %s offers: %s" %
+                               (type(bound).__name__, ", ".join(fields)))
+    return None
+
+
 def buffers_for(controller, pipe, stage):
     """Every constant buffer bound to this stage, as raw bytes."""
     out = []
@@ -142,12 +168,15 @@ def buffers_for(controller, pipe, stage):
         STATS["blocks"] += 1
         try:
             bound = getter(stage, index, 0)
-            if bound.resourceId == rd.ResourceId.Null():
+            binding = unpack_binding(bound)
+            if binding is None:
                 continue
-            size = bound.byteSize
+            resource, offset, size = binding
+            if resource == rd.ResourceId.Null():
+                continue
             if size == 0 or size > 65536:
                 size = min(block.byteSize or 4096, 65536)
-            data = controller.GetBufferData(bound.resourceId, bound.byteOffset, size)
+            data = controller.GetBufferData(resource, offset, size)
             blob = bytes(data)
             if not blob:
                 continue
