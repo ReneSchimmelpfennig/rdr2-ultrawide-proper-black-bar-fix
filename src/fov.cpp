@@ -169,21 +169,65 @@ std::atomic<float> g_corrected_at_weight{-1.0f};
 // Which structure was last seen carrying the value that got rendered.
 std::atomic<std::size_t> g_render_slot{static_cast<std::size_t>(-1)};
 
+// Some destinations are temporaries on the stack -- the log shows addresses in
+// the thread stack range receiving two different camera values in the same
+// frame. Stack addresses get reused, so without eviction the table fills up with
+// addresses that no longer mean anything, and once it is full a genuine camera
+// gets no slot at all. No slot means "not the rendered camera", which means the
+// correction silently stops. Least recently used wins, so transients age out.
+std::atomic<unsigned long long> g_dst_clock{0};
+std::atomic<unsigned long long> g_dst_used[kMaxDestinations]{};
+std::atomic<unsigned long long> g_dst_evictions{0};
+
+bool is_stack_address(std::uintptr_t addr) {
+    ULONG_PTR low = 0;
+    ULONG_PTR high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    return addr >= low && addr < high;
+}
+
 std::size_t record_destination(std::uintptr_t dst) {
+    const unsigned long long now = g_dst_clock.fetch_add(1, std::memory_order_relaxed);
     const std::size_t known = g_dst_known.load(std::memory_order_acquire);
+
     for (std::size_t i = 0; i < known; ++i) {
         if (g_dst[i] == dst) {
             g_dst_count[i].fetch_add(1, std::memory_order_relaxed);
+            g_dst_used[i].store(now, std::memory_order_relaxed);
             return i;
         }
     }
-    if (known < kMaxDestinations) {
-        g_dst[known] = dst;
-        g_dst_count[known].store(1, std::memory_order_relaxed);
-        g_dst_known.store(known + 1, std::memory_order_release);
-        return known;
+
+    std::size_t slot = known;
+    if (known >= kMaxDestinations) {
+        // Evict the least recently used entry.
+        slot = 0;
+        unsigned long long oldest = g_dst_used[0].load(std::memory_order_relaxed);
+        for (std::size_t i = 1; i < kMaxDestinations; ++i) {
+            const unsigned long long used = g_dst_used[i].load(std::memory_order_relaxed);
+            if (used < oldest) {
+                oldest = used;
+                slot = i;
+            }
+        }
+        g_dst_evictions.fetch_add(1, std::memory_order_relaxed);
+        // A reused slot must not inherit the previous occupant's history, or the
+        // rendered-camera test compares against a value from a different camera.
+        g_dst_shader_hits[slot].store(0, std::memory_order_relaxed);
+        g_dst_shader_samples[slot].store(0, std::memory_order_relaxed);
+        g_dst_last_final[slot].store(0.0f, std::memory_order_relaxed);
+        if (g_render_slot.load(std::memory_order_relaxed) == slot) {
+            g_render_slot.store(static_cast<std::size_t>(-1), std::memory_order_relaxed);
+        }
     }
-    return kNoSlot;
+
+    g_dst[slot] = dst;
+    g_dst_count[slot].store(1, std::memory_order_relaxed);
+    g_dst_used[slot].store(now, std::memory_order_relaxed);
+    if (slot == known) {
+        g_dst_known.store(known + 1, std::memory_order_release);
+    }
+    return slot;
 }
 
 void detour(std::uintptr_t dst, std::uintptr_t src) {
@@ -697,7 +741,8 @@ bool flattening_bars() { return g_flatten.load(); }
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();
     logger::info("");
-    logger::info("camera-state destinations seen: {}", known);
+    logger::info("camera-state destinations seen: {} (slots evicted: {})", known,
+                 g_dst_evictions.load());
     for (std::size_t i = 0; i < known; ++i) {
         const std::uintptr_t fov_addr = g_dst[i] + patterns::kCameraStateFov;
         const bool is_master = fov_addr == g_master_addr;
@@ -711,8 +756,8 @@ void report_destinations(std::uintptr_t module_base) {
             logger::info("    module +0x{:<9X}  {} call(s){}", g_dst[i] - module_base,
                          g_dst_count[i].load(), is_master ? "   <- the master" : "");
         } else {
-            logger::info("    0x{:016X}  {} call(s)   <- not in the module (heap object)",
-                         g_dst[i], g_dst_count[i].load());
+            logger::info("    0x{:016X}  {} call(s)   <- {}", g_dst[i], g_dst_count[i].load(),
+                         is_stack_address(g_dst[i]) ? "on the stack (temporary)" : "heap object");
         }
     }
     if (known == kMaxDestinations) {
