@@ -229,10 +229,41 @@ to computing `k` from the resolution. The correction therefore carried on
 unchanged.
 
 So the aspect getter demonstrably drives the letterbox. Whether it also drives
-the 2D layout is still open, because every test so far toggled it *during* a
-cutscene -- which can only answer whether the aspect is read per frame. If the
-2D layer sizes itself once, when the cutscene is built, no later toggle can
-reach it. The probe now defaults to on at startup for that reason.
+the 2D layout was still open at that point, because every test had toggled it
+*during* a cutscene -- which only answers whether the aspect is read per frame.
+If the 2D layer sizes itself once, when the cutscene is built, no later toggle
+can reach it.
+
+Repeated with the probe on from startup, so the layout was built under the faked
+aspect in the first place: **no change.** Confirmed from the log rather than the
+picture -- probe armed, patch holding, 120 frames at full letterbox weight.
+
+`GetAspectRatio()` is therefore not the lever for the 2D layer either. That
+retires the last lead this document carried.
+
+## Where the 2D problem stands
+
+Six approaches have now failed, all of them instrumented well enough that the
+negatives are real: bar-height zeroing, viewport and scissor rects, pixel
+history, memory search, constant buffers, the script native, and the aspect
+getter.
+
+What is known for certain:
+
+- the 2D layer lays out in a **16:9 box** (2560x1440 here), cropped to 2.35:1
+  for cutscenes -- there is no cutscene-specific rectangle
+- it does not derive that box from the bar heights, nor from the aspect getter
+- the vertices arrive already scaled, so the cause is CPU-side
+- the game *has* the inverse transform (`FUN_7ff675604f38`, three callers), so
+  whatever boxes the 2D layer must be findable as its counterpart
+
+The untried instrument, and the one most likely to end this: **a RenderDoc
+capture with callstack capture enabled.** That gives the CPU call stack of the
+subtitle or credits draw directly. There are no symbols, so it will be raw
+addresses -- which is all that is needed, since subtracting the module base
+turns them into Ghidra offsets. Every approach so far has worked forward from a
+value hoping to reach the draw; this works backward from the draw, which is the
+one direction not yet tried.
 
 Press **F8** to bring the bars back. The field-of-view correction stays active.
 
