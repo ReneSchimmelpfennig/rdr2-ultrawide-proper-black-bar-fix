@@ -39,7 +39,13 @@ bool host_is_rdr2() {
 }
 
 void report_environment() {
-    logger::info("RDR2 Ultrawide Cutscene Fix {}", PLUGIN_VERSION);
+    // The build stamp is here because it has already cost us twice: a
+    // conclusion drawn from a run that turned out to be using an older .asi.
+    // Copy-Item carries the source timestamp over, so the file date in the game
+    // folder is the build date and says nothing about which build is deployed.
+    // This line does.
+    logger::info("RDR2 Ultrawide Cutscene Fix {}  (built {} {})", PLUGIN_VERSION, __DATE__,
+                 __TIME__);
     logger::info("host RDR2.exe version {}",
               mem::main_module_version().empty() ? "<unknown>" : mem::main_module_version());
 
