@@ -329,6 +329,11 @@ void run_hotkeys(unsigned int duration_ms) {
             logger::info("Ctrl+Alt+F: 2D geometry search requested");
         }
         if (combo_pressed('A', aspect_key)) {
+            logger::info("Ctrl+Alt+A pressed");
+            if (safearea::aspect_count() == 0) {
+                logger::info("  ... but the aspect probe never armed -- nothing was changed, so a");
+                logger::info("      picture that does not move says nothing here");
+            }
             safearea::set_aspect_pretend_16_9(!safearea::aspect_pretending());
         }
         if (combo_pressed('S', safe_key)) {
@@ -443,7 +448,7 @@ DWORD WINAPI worker(LPVOID) {
             // enough to find a global, and it is logged either way.
             const float display_aspect = static_cast<float>(GetSystemMetrics(SM_CXSCREEN)) /
                                          static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
-            safearea::init_aspect(mem::executable_sections(module), display_aspect);
+            safearea::init_aspect(mem::executable_sections(module), display_aspect, module.base);
 
             // On its own thread. It used to run here and block for an hour,
             // which meant everything below -- every diagnostic tool -- was

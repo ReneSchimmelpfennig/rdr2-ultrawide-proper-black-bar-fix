@@ -122,6 +122,17 @@ inline constexpr std::uintptr_t kGetterSource = 0x3EA0BE0;  // what the getter r
 inline constexpr std::uintptr_t kScaleX = 0x3A11250;        // 1.0 in gameplay
 inline constexpr std::uintptr_t kScaleY = 0x3A11254;        // 1.0 in gameplay
 
+// float GetAspectRatio() -> movss xmm0, [rip+disp32] ; ret
+//
+// The display aspect the letterbox maths divides 16/9 by. Used only by the
+// aspect probe, and only as a fallback: the probe first tries to identify the
+// getter by the value it reads, which needs no offset at all. That failed once
+// because the global is not populated a second after load, hence this.
+//
+// Verified before use: the bytes must still be that exact getter shape and the
+// target must land inside the module.
+inline constexpr std::uintptr_t kAspectGetter = 0x173964;
+
 // What kDegreeCopyA reads as during gameplay. Checked at startup: if it does not
 // match, the offsets are stale and the observation is meaningless.
 inline constexpr float kExpectedGameplayValue = 45.0f;

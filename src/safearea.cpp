@@ -53,6 +53,7 @@ bool write_bytes(std::uintptr_t address, const std::uint8_t* data, std::size_t s
 constexpr std::size_t kAspectPatchSize = 10;
 
 std::uintptr_t g_aspect_site = 0;
+std::uintptr_t g_aspect_global = 0;
 std::array<std::uint8_t, kAspectPatchSize> g_aspect_original{};
 int g_aspect_candidates = 0;
 bool g_aspect_flat = false;
@@ -158,7 +159,8 @@ bool flat() { return g_flat; }
 
 int count() { return static_cast<int>(g_sites.size()); }
 
-bool init_aspect(const std::vector<mem::NamedRegion>& sections, float display_aspect) {
+bool init_aspect(const std::vector<mem::NamedRegion>& sections, float display_aspect,
+                 std::uintptr_t module_base) {
     g_aspect_site = 0;
     g_aspect_candidates = 0;
 
@@ -192,9 +194,32 @@ bool init_aspect(const std::vector<mem::NamedRegion>& sections, float display_as
     }
 
     if (g_aspect_candidates != 1) {
-        logger::info("safearea: {} getter(s) read {:.6f} -- need exactly one, not patching",
-                     g_aspect_candidates, display_aspect);
-        return false;
+        logger::info("safearea: {} getter(s) read {:.6f} at this moment", g_aspect_candidates,
+                     display_aspect);
+
+        // The value-based route needs the global to be populated, and a second
+        // after load it is not. Fall back to the address the decompiler gave us
+        // -- but verify it is still that getter rather than trusting an offset
+        // across a game patch.
+        const std::uintptr_t site = module_base + patterns::candidates::kAspectGetter;
+        if (!readable(site, kAspectPatchSize)) {
+            logger::info("safearea: the known aspect getter address is not readable");
+            return false;
+        }
+        const auto* code = reinterpret_cast<const std::uint8_t*>(site);
+        if (code[0] != 0xF3 || code[1] != 0x0F || code[2] != 0x10 || code[3] != 0x05 ||
+            code[8] != 0xC3) {
+            logger::info("safearea: the known aspect getter address does not hold that getter "
+                         "(starts {:02X} {:02X} {:02X} {:02X}) -- stale offset, not patching",
+                         code[0], code[1], code[2], code[3]);
+            return false;
+        }
+        const std::uintptr_t target = mem::resolve_rip_relative(site, kDispOffset, kMovssLength);
+        logger::info("safearea: falling back to the known address 0x{:016X}, global 0x{:016X} = "
+                     "{:.6f}",
+                     site, target, readable(target, sizeof(float)) ? read_float(target) : -1.0f);
+        found = site;
+        g_aspect_candidates = 1;
     }
 
     // Ten bytes have to be ours. The tenth is padding behind the ret; if it is
@@ -207,6 +232,7 @@ bool init_aspect(const std::vector<mem::NamedRegion>& sections, float display_as
     }
 
     g_aspect_site = found;
+    g_aspect_global = mem::resolve_rip_relative(found, kDispOffset, kMovssLength);
     std::memcpy(g_aspect_original.data(), reinterpret_cast<const void*>(found),
                 g_aspect_original.size());
     logger::info("safearea: aspect probe ready at 0x{:016X}", found);
@@ -219,6 +245,14 @@ bool set_aspect_pretend_16_9(bool on) {
     }
     if (on == g_aspect_flat) {
         return true;
+    }
+
+    // What the getter reads right now, logged at the moment of the test rather
+    // than at load. If this is not the display aspect the probe is aimed at the
+    // wrong global and the result would mean nothing.
+    if (g_aspect_global != 0 && readable(g_aspect_global, sizeof(float))) {
+        logger::info("safearea: the aspect global currently reads {:.6f}",
+                     read_float(g_aspect_global));
     }
 
     std::array<std::uint8_t, kAspectPatchSize> bytes = g_aspect_original;

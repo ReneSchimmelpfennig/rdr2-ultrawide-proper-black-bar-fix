@@ -68,7 +68,8 @@ bool set_flat(bool flat);
 // image is resolved and the one whose global currently holds that value wins.
 // Nothing is patched unless exactly one does, so a wrong guess cannot silently
 // patch something else.
-bool init_aspect(const std::vector<mem::NamedRegion>& sections, float display_aspect);
+bool init_aspect(const std::vector<mem::NamedRegion>& sections, float display_aspect,
+                 std::uintptr_t module_base);
 
 bool set_aspect_pretend_16_9(bool on);
 
