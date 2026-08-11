@@ -1235,6 +1235,15 @@ void set_once_per_frame(bool on) { g_once_per_frame.store(on); }
 
 bool once_per_frame() { return g_once_per_frame.load(); }
 
+std::uintptr_t rendered_fov_address() {
+    const std::size_t slot = g_render_slot.load(std::memory_order_relaxed);
+    if (slot == static_cast<std::size_t>(-1) || slot >= kMaxDestinations) {
+        return 0;
+    }
+    const std::uintptr_t dst = g_dst[slot];
+    return dst == 0 ? 0 : dst + patterns::kCameraStateFov;
+}
+
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();

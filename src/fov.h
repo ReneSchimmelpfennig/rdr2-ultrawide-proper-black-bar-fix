@@ -104,6 +104,16 @@ void set_flatten_bars(bool on);
 void set_once_per_frame(bool on);
 [[nodiscard]] bool once_per_frame();
 
+// Address of the field of view inside the camera state currently identified as
+// the rendered one, or 0 if there is none yet.
+//
+// For arming a read watchpoint on it: the remaining judder is a one-frame gap
+// after a camera cut, caused by identifying the rendered camera *after* the
+// fact. If the projection reads this field from one identifiable place, the
+// correction belongs there instead and the identification problem disappears.
+// If it reads from five, that is worth knowing before rewriting anything.
+[[nodiscard]] std::uintptr_t rendered_fov_address();
+
 // Logs every camera-state destination the detour has seen, with hit counts and
 // whether it is the master. Call after a run to find out which structures exist
 // -- only one of them can be the one the projection reads.

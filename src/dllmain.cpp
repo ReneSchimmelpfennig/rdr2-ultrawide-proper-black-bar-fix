@@ -663,6 +663,22 @@ DWORD WINAPI worker(LPVOID) {
         bool in_cutscene = false;
         DWORD last_periodic = GetTickCount();
 
+        // Once per session, inside an established cutscene: who reads the field
+        // of view of the camera that is being rendered?
+        //
+        // The remaining judder is a one-frame gap after each camera cut. We
+        // identify the rendered camera from the shader constant, which carries
+        // last frame's value, so at a cut the new structure is not confirmed yet
+        // and goes uncorrected for one frame. No wider net fixes that -- the
+        // attempt to correct every state instead compounded and had to be
+        // reverted.
+        //
+        // Correcting where the projection *reads* the value would have neither
+        // problem. Whether that is one place or five decides whether it is a
+        // small change or the rewrite that was rejected at the start of the
+        // project, and this answers it before anything is rewritten.
+        bool probed_readers = false;
+
         while (data) {
             if (g_request_2d_search.exchange(false)) {
                 hunt::find_known_values(data, module.base, weight, 60 * 1000);
@@ -672,6 +688,20 @@ DWORD WINAPI worker(LPVOID) {
             // cutscene edges are the moments worth reporting: the first run of
             // this reported "0 calls" from the main menu, which was true and
             // nearly worthless.
+            if (!probed_readers && is_readable(weight, sizeof(float)) &&
+                read_float(weight) > 0.99f) {
+                if (const std::uintptr_t fov_addr = fov::rendered_fov_address(); fov_addr != 0) {
+                    probed_readers = true;
+                    logger::info("");
+                    logger::info("=== who reads the rendered camera's field of view? ===");
+                    logger::info("watching 0x{:016X} for 8 s. The picture may stutter while this",
+                                 fov_addr);
+                    logger::info("runs -- a debug register traps every access, which is the point.");
+                    watchpoint::find_writers(fov_addr, module.base, 8000,
+                                             watchpoint::Trap::ReadsAndWrites);
+                }
+            }
+
             if ((uibox::found() || overlay::found()) && is_readable(weight, sizeof(float))) {
                 const float w = read_float(weight);
                 if (!in_cutscene && w > 0.5f) {
