@@ -80,7 +80,26 @@ std::atomic<float> g_strength{kStartingStrength};
 // Correcting only at a settled weight puts our change at the same moment as the
 // game's own cut, where it is hidden. The cost is that the correction can no
 // longer ease in -- but there was nothing to ease into.
-constexpr bool kCorrectOnlySettled = true;
+// Ramp the correction with the bar weight again, now that what it used to
+// amplify is gone.
+//
+// It was switched off when the transition judder was still unexplained, and the
+// reasoning then was sound as far as it went: during a fade-in the game does not
+// reframe -- the authored value sits at a constant 51.2820 for the whole ramp,
+// measured -- so following the bars invents a twelve-degree zoom the game never
+// performs.
+//
+// That observation still stands. What has changed is everything the ramp was
+// competing with: the shader-match tolerance was fifty times too wide, two
+// structures were corrected per frame, the tag verification checked a table that
+// contained authored values, our own output came back rounded past the tag, and
+// the focal-length clamp quietly reverted the result. Each of those turned the
+// ramp into a fight; none of them is left.
+//
+// So the choice is now what it should have been all along: a smooth invented
+// zoom, or two clean jumps at the cuts. One constant, and a judgement about
+// pixels rather than about correctness.
+constexpr bool kCorrectOnlySettled = false;
 constexpr float kSettledWeight = 0.999f;
 
 // Has the letterbox been fully in during this cutscene? Reset when the weight
