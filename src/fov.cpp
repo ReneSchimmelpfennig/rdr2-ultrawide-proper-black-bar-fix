@@ -198,9 +198,32 @@ bool is_our_own_output(float value) { return carries_tag(value); }
 // copy and the tag is enough, which the logs confirm.
 std::atomic<float> g_corrected_at_weight{-1.0f};
 
-// Default on: that is the behaviour that has been running. See the comment at
-// the guard itself for why it is in question.
+// The rule is now "at most one *structure* per frame", not "at most one
+// correction per frame". Both extremes were measured and both are wrong:
+//
+//   one correction per frame  -- the rendered structure is called twice per
+//                                frame during a fade, and the game's second,
+//                                later write was waved through and overwrote
+//                                the correction. The shader constant read 51.2
+//                                while we were writing 40.x, so the correction
+//                                never reached the screen, and whether it did
+//                                varied frame to frame. That was the judder.
+//
+//   correct everything        -- fixes that (the shader constant now follows our
+//                                output), but lets the correction compound: a
+//                                second structure receives our own output as its
+//                                input and gets corrected again. Measured as a
+//                                step of -0.295 where every other frame stepped
+//                                -0.155, i.e. exactly twice. In one scene that
+//                                happened often enough to look abrupt.
+//
+// Correcting the same structure repeatedly is safe, because each call brings a
+// fresh authored value; correcting a *different* one in the same frame is what
+// compounds. So the guard keys on the slot rather than on the correction count.
 std::atomic<bool> g_once_per_frame{true};
+
+// Which structure took this frame's correction.
+std::atomic<std::size_t> g_frame_slot{static_cast<std::size_t>(-1)};
 
 // Which structure was last seen carrying the value that got rendered.
 std::atomic<std::size_t> g_render_slot{static_cast<std::size_t>(-1)};
@@ -450,8 +473,9 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // the question gets answered in one cutscene rather than in another build.
     const bool ramping = weight > 0.0f && weight < 0.999f;
     if (g_once_per_frame.load(std::memory_order_relaxed) && ramping &&
-        weight == g_corrected_at_weight.load(std::memory_order_relaxed)) {
-        finish(original, "skip-fra");
+        weight == g_corrected_at_weight.load(std::memory_order_relaxed) &&
+        slot != g_frame_slot.load(std::memory_order_relaxed)) {
+        finish(original, "skip-oth");
         return;
     }
 
@@ -514,6 +538,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
     if (ramping) {
         g_corrected_at_weight.store(weight, std::memory_order_relaxed);
+        g_frame_slot.store(slot, std::memory_order_relaxed);
     }
     finish(result, "CORRECT");
 
