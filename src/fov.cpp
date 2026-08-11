@@ -247,7 +247,40 @@ bool carries_tag(float value) {
 // The tag stays. It is exact, cannot drift into a false positive beyond one in
 // 256, and still catches the one case that matters -- the rendered camera being
 // handed back its own previous value as a source.
-bool is_our_own_output(float value) { return carries_tag(value); }
+// The tag alone was not enough, and the comment above says why without drawing
+// the conclusion: an authored value carries the pattern by chance once in 256,
+// and "the cost is a single uncorrected frame, which nobody can see" is simply
+// wrong. The correction is nine and a half degrees, and a single frame of it
+// missing is a visible hop.
+//
+// Measured on the shader constant -- the value that reached the picture, not one
+// of ours: 14 jumps larger than a degree in 716 frames of one cutscene, every
+// one of them the screen flipping between 39.3141 and 29.7733, which are the
+// authored and the corrected form of the same camera. That is the judder, and
+// the rate matches a one-in-256 coincidence across several calls per frame.
+//
+// So the tag stays as a cheap pre-filter, and a hit is then verified against the
+// values we actually left behind. A genuine copy of our output is bit-identical
+// to one of them; a coincidence is not. Sixty-four comparisons, only on the one
+// call in 256 that carries the pattern.
+bool matches_something_we_wrote(float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const std::size_t known = g_dst_known.load(std::memory_order_acquire);
+    for (std::size_t i = 0; i < known && i < kMaxDestinations; ++i) {
+        const float ours = g_dst_last_final[i].load(std::memory_order_relaxed);
+        std::uint32_t theirs = 0;
+        std::memcpy(&theirs, &ours, sizeof(theirs));
+        if (theirs == bits) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_our_own_output(float value) {
+    return carries_tag(value) && matches_something_we_wrote(value);
+}
 
 // One correction per frame, during a ramp.
 //
