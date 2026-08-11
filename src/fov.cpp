@@ -82,6 +82,10 @@ std::atomic<float> g_strength{kStartingStrength};
 // longer ease in -- but there was nothing to ease into.
 constexpr bool kCorrectOnlySettled = true;
 constexpr float kSettledWeight = 0.999f;
+
+// Has the letterbox been fully in during this cutscene? Reset when the weight
+// returns to zero, i.e. when gameplay resumes.
+std::atomic<bool> g_reached_settled{false};
 std::atomic<bool> g_force{false};
 std::atomic<bool> g_flatten{false};
 std::atomic<int> g_flatten_logged{0};
@@ -717,12 +721,32 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
 
         case Mode::Corrected: {
             if (weight <= 0.0f) {
+                g_reached_settled.store(false, std::memory_order_relaxed);
                 finish(original, "gameplay");  // leave the camera exactly as authored
                 return;
             }
-            // See kCorrectOnlySettled: while the bars are still moving the game
-            // is not reframing anything, so neither do we.
-            if (kCorrectOnlySettled && weight < kSettledWeight) {
+            // The two ends of a cutscene are not symmetric, which the first
+            // version of this rule got wrong.
+            //
+            // Fading in, the game still renders the gameplay camera while the
+            // bars slide over it -- measured as a constant authored 51.2820
+            // through the whole ramp. Correcting there invents a zoom the game
+            // never performs.
+            //
+            // Fading out it keeps the cutscene shot: at weight 0.9686 the screen
+            // still showed 39.3141, the cutscene camera, and only later cut to
+            // gameplay. Stopping the correction when the weight starts to fall
+            // therefore produced a nine-and-a-half degree jump of our own making,
+            // one frame long, right at the end of every cutscene.
+            //
+            // So the test is not "are the bars moving" but "has this cutscene
+            // already been established". Once the weight has reached full in this
+            // cutscene, it stays corrected until gameplay resumes.
+            if (weight >= kSettledWeight) {
+                g_reached_settled.store(true, std::memory_order_relaxed);
+            }
+            if (kCorrectOnlySettled && weight < kSettledWeight &&
+                !g_reached_settled.load(std::memory_order_relaxed)) {
                 finish(original, "sliding");
                 return;
             }
