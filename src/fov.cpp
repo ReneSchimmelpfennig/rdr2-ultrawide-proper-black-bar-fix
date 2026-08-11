@@ -184,6 +184,8 @@ std::atomic<int> g_ramp_lines{0};
 std::atomic<DWORD> g_ramp_tick{0};
 float g_ramp_last_out = 0.0f;
 std::atomic<std::size_t> g_ramp_last_slot{static_cast<std::size_t>(-1)};
+// 0 = nothing logged yet, 1 = correcting, 2 = sliding.
+std::atomic<int> g_ramp_state{0};
 
 constexpr std::uint32_t kTagMask = 0x000000FFu;
 constexpr std::uint32_t kTagValue = 0x000000A5u;
@@ -470,10 +472,28 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // the previous trace recorded only the winner and so could not answer
         // it.
         const bool is_correction = std::strcmp(decision, "CORRECT") == 0;
-        const bool was_the_usual_camera =
-            slot != kNoSlot && slot == g_ramp_last_slot.load(std::memory_order_relaxed);
+        const bool is_sliding = std::strcmp(decision, "sliding") == 0;
 
-        if (in_transition && (is_correction || was_the_usual_camera) &&
+        // Log every *change* of state for the rendered camera, over the whole
+        // cutscene rather than only its ramps.
+        //
+        // The previous condition hung on "a correction during a ramp", and with
+        // the correction now suppressed while the bars slide, that is never
+        // true -- so the trace went silent exactly where the remaining problem
+        // is. And the per-decision log is spent by weight 0.0665, which is the
+        // first few frames.
+        //
+        // One line per transition between correcting and not correcting counts
+        // flapping directly: if the weight hovers around the threshold, the
+        // correction switches on and off, and each switch is a twelve-degree
+        // jump. That would look exactly like hopping back and forth.
+        bool changed = false;
+        if (is_correction || is_sliding) {
+            const int state = is_correction ? 1 : 2;
+            changed = g_ramp_state.exchange(state, std::memory_order_relaxed) != state;
+        }
+
+        if (weight > 0.0f && changed &&
             g_ramp_lines.load(std::memory_order_relaxed) < kMaxRampLines) {
             g_ramp_lines.fetch_add(1, std::memory_order_relaxed);
             const DWORD now = GetTickCount();
