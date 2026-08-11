@@ -59,8 +59,29 @@ constexpr int kLoggedCalls = 8;
 //                      visible movement is ours -- 14 of them in 1.3 seconds,
 //                      which the unmodded game never does. That would also
 //                      explain why a longer transition looks worse.
-constexpr float kStartingStrength = 0.0f;
+constexpr float kStartingStrength = 1.0f;
 std::atomic<float> g_strength{kStartingStrength};
+
+// Correct only while the letterbox is fully in, not while it slides.
+//
+// Ramping the correction with the bar weight was chosen early on so the
+// correction would arrive smoothly rather than snap. It was the wrong thing to
+// attach it to, and the measurement finally says why: during the whole
+// transition the game's own camera does not move. 322 of 436 corrections during
+// ramps arrive with in = 51.2820 exactly, the rest within 0.02 of it. The game
+// slides the bars over an unchanged frame and *then* cuts to the cutscene
+// camera.
+//
+// So the ramp is a mask, not a reframing -- and by following it we invent a
+// twelve-degree zoom that the unmodded game never performs, which then snaps
+// when the real cutscene camera arrives. In and back out, and the longer the
+// transition the further the excursion. That matches every report.
+//
+// Correcting only at a settled weight puts our change at the same moment as the
+// game's own cut, where it is hidden. The cost is that the correction can no
+// longer ease in -- but there was nothing to ease into.
+constexpr bool kCorrectOnlySettled = true;
+constexpr float kSettledWeight = 0.999f;
 std::atomic<bool> g_force{false};
 std::atomic<bool> g_flatten{false};
 std::atomic<int> g_flatten_logged{0};
@@ -538,6 +559,12 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         case Mode::Corrected: {
             if (weight <= 0.0f) {
                 finish(original, "gameplay");  // leave the camera exactly as authored
+                return;
+            }
+            // See kCorrectOnlySettled: while the bars are still moving the game
+            // is not reframing anything, so neither do we.
+            if (kCorrectOnlySettled && weight < kSettledWeight) {
+                finish(original, "sliding");
                 return;
             }
             // k straight from the game's own bar height: it already divides by
