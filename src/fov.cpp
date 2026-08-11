@@ -87,6 +87,10 @@ constexpr float kSettledWeight = 0.999f;
 // returns to zero, i.e. when gameplay resumes.
 std::atomic<bool> g_reached_settled{false};
 
+// Where a correction last landed, master global excluded. See the note at the
+// store itself.
+std::atomic<std::uintptr_t> g_last_corrected_addr{0};
+
 // TRIED AND REVERTED. Correcting every camera state in an established cutscene
 // compounds, exactly as the original design did, and the ring did not prevent
 // it.
@@ -918,6 +922,19 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // to hold what we wrote, not what the game wrote.
     remember_our_output(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
+
+    // The address a correction actually landed in. This is what the read
+    // watchpoint has to watch: whatever reads *this* is a real consumer, and
+    // since the correction demonstrably reaches the picture, the projection is
+    // among them.
+    //
+    // The first attempt watched g_master_addr instead, because it asked for the
+    // render slot's address and that slot happened to be the master global in
+    // that run. It found the getter and ApplyCameraState -- both already known,
+    // neither of them the projection.
+    if (weight >= kSettledWeight && fov_addr != g_master_addr) {
+        g_last_corrected_addr.store(fov_addr, std::memory_order_relaxed);
+    }
     if (ramping) {
         g_corrected_at_weight.store(weight, std::memory_order_relaxed);
         g_frame_slot.store(slot, std::memory_order_relaxed);
@@ -1266,12 +1283,7 @@ void set_once_per_frame(bool on) { g_once_per_frame.store(on); }
 bool once_per_frame() { return g_once_per_frame.load(); }
 
 std::uintptr_t rendered_fov_address() {
-    const std::size_t slot = g_render_slot.load(std::memory_order_relaxed);
-    if (slot == static_cast<std::size_t>(-1) || slot >= kMaxDestinations) {
-        return 0;
-    }
-    const std::uintptr_t dst = g_dst[slot];
-    return dst == 0 ? 0 : dst + patterns::kCameraStateFov;
+    return g_last_corrected_addr.load(std::memory_order_relaxed);
 }
 
 

@@ -688,16 +688,19 @@ DWORD WINAPI worker(LPVOID) {
             // cutscene edges are the moments worth reporting: the first run of
             // this reported "0 calls" from the main menu, which was true and
             // nearly worthless.
+            // Wait a moment after the cutscene settles, so a correction has
+            // actually happened and there is an address worth watching.
             if (!probed_readers && is_readable(weight, sizeof(float)) &&
-                read_float(weight) > 0.99f) {
+                read_float(weight) > 0.999f) {
                 if (const std::uintptr_t fov_addr = fov::rendered_fov_address(); fov_addr != 0) {
                     probed_readers = true;
                     logger::info("");
                     logger::info("=== who reads the rendered camera's field of view? ===");
-                    logger::info("watching 0x{:016X} for 8 s. The picture may stutter while this",
+                    logger::info("watching 0x{:016X} for 12 s -- the address a correction last",
                                  fov_addr);
-                    logger::info("runs -- a debug register traps every access, which is the point.");
-                    watchpoint::find_writers(fov_addr, module.base, 8000,
+                    logger::info("landed in, so every reader of it is a real consumer.");
+                    logger::info("Anything outside RDR2.exe in the list below is our own detour.");
+                    watchpoint::find_writers(fov_addr, module.base, 12000,
                                              watchpoint::Trap::ReadsAndWrites);
                 }
             }
