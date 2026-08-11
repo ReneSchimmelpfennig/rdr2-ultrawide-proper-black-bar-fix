@@ -95,6 +95,57 @@ void __fastcall detour(float* pos, float* size, unsigned char flag) {
            &size_out);
 }
 
+// The sibling. Counted only -- never disabled -- because the question it
+// answers is whether the family runs at all, and a second behavioural change
+// would only muddy that.
+using AlignFn = std::uint64_t(__fastcall*)(int, float*, float*, float*);
+
+AlignFn g_align_original = nullptr;
+std::uintptr_t g_align_site = 0;
+std::atomic<unsigned> g_align_calls{0};
+
+std::uint64_t __fastcall align_detour(int mode, float* pos, float* size, float* rect) {
+    g_align_calls.fetch_add(1, std::memory_order_relaxed);
+    return g_align_original(mode, pos, size, rect);
+}
+
+// Hooks `signature`, storing the trampoline in `original`. Returns the address
+// or 0, and says in the log which of the two failure modes happened -- a
+// signature that did not resolve is a different problem from a hook that did
+// not take.
+std::uintptr_t hook_one(const std::vector<mem::NamedRegion>& sections, std::string_view signature,
+                        const char* label, void* detour_fn, void** original) {
+    const auto pattern = mem::parse_pattern(signature);
+    if (!pattern) {
+        logger::info("uibox: malformed signature for {}", label);
+        return 0;
+    }
+
+    std::vector<std::uintptr_t> hits;
+    for (const auto& [name, region] : sections) {
+        mem::find_all(region, *pattern, hits);
+    }
+    if (hits.size() != 1) {
+        logger::info("uibox: {} matched {} time(s), need exactly one -- not hooking", label,
+                     hits.size());
+        return 0;
+    }
+
+    const std::uintptr_t site = hits.front();
+    if (const MH_STATUS status =
+            MH_CreateHook(reinterpret_cast<LPVOID>(site), detour_fn, original);
+        status != MH_OK) {
+        logger::info("uibox: MH_CreateHook({}) failed: {}", label, MH_StatusToString(status));
+        return 0;
+    }
+    if (const MH_STATUS status = MH_EnableHook(reinterpret_cast<LPVOID>(site)); status != MH_OK) {
+        logger::info("uibox: MH_EnableHook({}) failed: {}", label, MH_StatusToString(status));
+        return 0;
+    }
+    logger::info("uibox: {} hooked at 0x{:016X}", label, site);
+    return site;
+}
+
 }  // namespace
 
 bool init(const std::vector<mem::NamedRegion>& sections) {
@@ -141,8 +192,13 @@ bool init(const std::vector<mem::NamedRegion>& sections) {
         return false;
     }
     g_original = reinterpret_cast<Fn>(trampoline);
-
     logger::info("uibox: 16:9 box transform hooked at 0x{:016X}", g_site);
+
+    void* align_trampoline = nullptr;
+    g_align_site = hook_one(sections, patterns::kUiAlignVariant, "align variant",
+                            reinterpret_cast<LPVOID>(&align_detour), &align_trampoline);
+    g_align_original = reinterpret_cast<AlignFn>(align_trampoline);
+
     return true;
 }
 
@@ -166,12 +222,18 @@ void report(std::uintptr_t module_base) {
     }
 
     const unsigned calls = g_calls.load(std::memory_order_relaxed);
-    logger::info("uibox: {} call(s) so far, {} distinct caller(s)", calls,
-                 g_caller_count.load(std::memory_order_relaxed));
+    const unsigned align = g_align_calls.load(std::memory_order_relaxed);
+    logger::info("uibox: box transform {} call(s), {} distinct caller(s); align variant {} call(s)",
+                 calls, g_caller_count.load(std::memory_order_relaxed), align);
 
+    if (calls == 0 && align == 0) {
+        logger::info("uibox:   ZERO calls on both. Neither ever executes, so patching them could");
+        logger::info("uibox:   not have changed anything. A dead path, not a failed idea -- and");
+        logger::info("uibox:   the whole ultrawide-UI family goes with it.");
+        return;
+    }
     if (calls == 0) {
-        logger::info("uibox:   ZERO calls. The transform is never executed, so patching it could");
-        logger::info("uibox:   not have changed anything. This is a dead path, not a failed idea.");
+        logger::info("uibox:   the box transform itself never runs; only the align variant does");
         return;
     }
 

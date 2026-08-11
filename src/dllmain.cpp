@@ -610,26 +610,39 @@ DWORD WINAPI worker(LPVOID) {
         // sessions have already been spent on a hotkey that was mistyped or
         // forgotten; the answer to "does this code run at all" should not
         // depend on anyone remembering to ask.
-        const DWORD started = GetTickCount();
-        bool reported_early = false;
-        bool reported_late = false;
+        // Report when it matters rather than on a clock. The last run produced
+        // "0 calls after 45 s", which was true and nearly worthless: the game
+        // was still in the menu, where nothing script-driven draws anyway. The
+        // meaningful moments are the two edges of a cutscene, so the letterbox
+        // weight triggers the report.
+        bool in_cutscene = false;
+        DWORD last_periodic = GetTickCount();
 
         while (data) {
             if (g_request_2d_search.exchange(false)) {
                 hunt::find_known_values(data, module.base, weight, 60 * 1000);
             }
-            const DWORD elapsed = GetTickCount() - started;
-            if (!reported_early && elapsed > 45 * 1000) {
-                logger::info("");
-                logger::info("--- uibox after 45 s (menu or early gameplay) ---");
-                uibox::report(module.base);
-                reported_early = true;
+
+            if (is_readable(weight, sizeof(float))) {
+                const float w = read_float(weight);
+                if (!in_cutscene && w > 0.5f) {
+                    in_cutscene = true;
+                    logger::info("");
+                    logger::info("--- uibox: a cutscene just started ---");
+                    uibox::report(module.base);
+                } else if (in_cutscene && w < 0.01f) {
+                    in_cutscene = false;
+                    logger::info("");
+                    logger::info("--- uibox: the cutscene just ended (this is the count that"
+                                 " matters) ---");
+                    uibox::report(module.base);
+                }
             }
-            if (!reported_late && elapsed > 5 * 60 * 1000) {
-                logger::info("");
-                logger::info("--- uibox after 5 min (a cutscene should have happened) ---");
+
+            if (GetTickCount() - last_periodic > 60 * 1000) {
+                last_periodic = GetTickCount();
+                logger::info("--- uibox, periodic ---");
                 uibox::report(module.base);
-                reported_late = true;
             }
             Sleep(200);
         }

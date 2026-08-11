@@ -163,6 +163,18 @@ inline constexpr float kExpectedGameplayValue = 45.0f;
 inline constexpr std::string_view kUiBoxTransform =
     "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 41 8A F0 41 8A C8";
 
+// undefined8 ApplyUiAlign(int mode, float* pos, float* size, float* rect)
+//
+// The sibling of kUiBoxTransform, sitting immediately after it and doing the
+// same job for several alignment modes at once (left, centre, right, and a
+// rectangle variant). Hooked purely to count calls: if neither this nor the
+// transform above ever runs during a cutscene, the whole ultrawide-UI family is
+// dead code for the 2D layer and the search moves elsewhere.
+//
+// 28 bytes, no call displacement inside them, one hit in the image.
+inline constexpr std::string_view kUiAlignVariant =
+    "48 8B C4 48 89 58 08 48 89 68 10 48 89 70 18 57 48 83 EC 30 0F 29 78 E8 49 8B D9 49";
+
 // A function prologue, also taken from RDR2NoBlackBars.asi. Purpose still
 // unconfirmed; resolves to exactly one address on this build.
 inline constexpr std::string_view kUnknownPrologue =
