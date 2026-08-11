@@ -40,21 +40,37 @@ letterbox animation, so the transition matches the bars rather than snapping.
 | Field of view in cutscenes | works, verified frame by frame against a walkthrough recording |
 | Fade in / fade out | smooth, follows the game's own easing |
 | Black bars | removed, pillarbox and letterbox alike |
-| **2D elements without bars** | **not fixed yet — see below** |
+| Full-screen overlays and the intro video | fixed — they cover the whole screen, no smearing |
+| **Credit inserts and subtitles** | **not fixed yet — see below** |
 
-### Known issue: the 2D layer
+### Fixed: the artefacts in the former bar area
 
-With the bars removed, 2D elements during cutscenes are still laid out for the
-old 2560x1090 window, so they appear too small, and the area the bars used to
-cover can show artefacts.
+The intro's photographic filter and the intro video sample a 1920x1080 texture —
+16:9 — and the game maps it into the 16:9 part of an ultrawide screen. Beyond
+that, the sampler has nothing valid left and repeats the edge column, which is
+the horizontal smearing that appears once the bars are gone.
 
-Press **F8** to bring the bars back. The field-of-view correction stays active,
-so you get correct framing inside the boxed-in frame — not the goal of this
-project, but a usable state until the 2D layer is sorted out.
+The plugin intercepts that mapping. A 16:9 asset cannot be whole, undistorted
+and full-width on a 21:9 screen at once, so there are three ways to spend the
+difference, cycled with `Ctrl+Alt+O`:
 
-Tracking that down is a separate piece of reverse engineering of roughly the
-same size as the field-of-view work, and it is not finished. What is settled so
-far, each of it measured rather than assumed:
+| Mode | What it costs |
+|---|---|
+| **Cover** (default) | proportions kept, 25% of the height cropped |
+| Fitted | the game's own behaviour, including the smearing |
+| Stretched | full width, 34% wider than authored |
+
+### Known issue: credit inserts and subtitles
+
+Credit inserts and subtitles are still laid out for the old 2560x1090 window and
+appear too small. They have nothing to do with the artefacts above — that turned
+out to be two separate problems wearing one description.
+
+Press **F8** to bring the bars back if it bothers you. The field-of-view
+correction stays active, so you get correct framing inside the boxed-in frame —
+not the goal of this project, but a usable state.
+
+What is settled so far, each of it measured rather than assumed:
 
 - the 2D layer lays out in a **16:9 box** (2560x1440 here), which cutscenes then
   crop to 2.35:1. `1440 x 16/9 = 2560` exactly, so there is no cutscene-specific
@@ -64,9 +80,11 @@ far, each of it measured rather than assumed:
 - nor from the script native that exposes the bar height, patched to zero and
   tested through a full cutscene
 - nor from the aspect ratio getter, patched to report 16:9 from startup
+- nor from the `SET_SCRIPT_GFX_ALIGN` family: both functions were hooked and
+  counted through a whole cutscene and never executed once
 
-[`docs/how-it-works.md`](docs/how-it-works.md) has the full list with the
-evidence, including what the next step should be. Contributions welcome.
+[`docs/next-session.md`](docs/next-session.md) has the full list with the
+evidence and the plan. Contributions welcome.
 
 ## Requirements
 
@@ -89,6 +107,7 @@ elevated shell.
 | `F9` / `F10` | correction strength -0.05 / +0.05 |
 | `F11` | apply the correction during gameplay too (for still comparisons) |
 | `F12` | reset strength to 1.00 |
+| `Ctrl+Alt+O` | overlay mapping: cover / fitted / stretched |
 
 Strength `1.00` is the geometrically correct value. It is adjustable because the
 visible window (2.349:1) and an ultrawide screen (2.389:1) do not match exactly:
