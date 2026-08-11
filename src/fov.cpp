@@ -86,6 +86,11 @@ constexpr float kSettledWeight = 0.999f;
 // Has the letterbox been fully in during this cutscene? Reset when the weight
 // returns to zero, i.e. when gameplay resumes.
 std::atomic<bool> g_reached_settled{false};
+
+// Correct every camera state once the cutscene is established. See the long note
+// at the is_rendered check. One constant to turn off if it misbehaves -- the
+// failure mode is unmistakable: the picture zooms far too far in.
+constexpr bool kCorrectAllWhenSettled = true;
 std::atomic<bool> g_force{false};
 std::atomic<bool> g_flatten{false};
 std::atomic<int> g_flatten_logged{0};
@@ -282,7 +287,15 @@ bool carries_tag(float value) {
 //
 // A dedicated ring, written only where a correction actually happens, is the
 // thing the tag needed to be checked against.
-constexpr std::size_t kOutputRing = 32;
+// Sized for the settled-cutscene mode below, which corrects every camera state
+// rather than one: that is roughly 28 writes per frame, so 32 entries would hold
+// barely a single frame and a value copied onwards two frames later would look
+// foreign and be corrected a second time. 256 covers about nine frames.
+//
+// Enlarging it is only safe because the comparison is exact. The ring that
+// failed before compared with a tolerance, where more entries meant a wider net
+// and eventually matched everything.
+constexpr std::size_t kOutputRing = 256;
 std::atomic<std::uint32_t> g_our_outputs[kOutputRing]{};
 std::atomic<std::size_t> g_output_next{0};
 
@@ -710,7 +723,29 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     //
     // is_our_own_output stays as a safety net for the case of two rendered
     // cameras feeding each other.
-    if (!is_rendered) {
+    // In an established cutscene, correct every camera state rather than only
+    // the one identified as rendered.
+    //
+    // The identification costs a frame at every cut: the shader constant carries
+    // what was rendered one frame late, so when the game switches a shot onto a
+    // different structure, that structure is not yet confirmed and goes
+    // uncorrected for one frame. Measured as exactly the three remaining jumps,
+    // each nine and a half degrees, each immediately after a cut.
+    //
+    // Correcting everything removes the need to predict the cut. This is how the
+    // plugin worked originally, and it failed then by compounding into a
+    // threefold zoom -- because a corrected value arriving as another state's
+    // input was corrected again. What was missing then is now in place and
+    // measured: is_our_own_output checks the tag *and* exact membership in the
+    // ring of values we actually wrote.
+    //
+    // Restricted to full weight in an established cutscene on purpose. During a
+    // ramp the blend spring mixes states arithmetically, which destroys both the
+    // tag and the exact match, and that is the ground the old design foundered
+    // on. At a settled weight there is no such blend.
+    const bool settled_cutscene = kCorrectAllWhenSettled && weight >= kSettledWeight &&
+                                  g_reached_settled.load(std::memory_order_relaxed);
+    if (!is_rendered && !settled_cutscene) {
         finish(original, "skip-not");
         return;
     }
