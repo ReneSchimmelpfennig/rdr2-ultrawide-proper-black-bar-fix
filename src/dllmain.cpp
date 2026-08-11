@@ -380,14 +380,14 @@ void run_hotkeys(unsigned int duration_ms) {
             logger::info("Ctrl+Alt+O pressed");
             overlay::report(g_module_base);
             switch (overlay::mode()) {
-                case overlay::Mode::Stretched:
-                    overlay::set_mode(overlay::Mode::Cover);
-                    break;
                 case overlay::Mode::Cover:
                     overlay::set_mode(overlay::Mode::Fitted);
                     break;
                 case overlay::Mode::Fitted:
                     overlay::set_mode(overlay::Mode::Stretched);
+                    break;
+                case overlay::Mode::Stretched:
+                    overlay::set_mode(overlay::Mode::Cover);
                     break;
             }
         }
@@ -562,12 +562,15 @@ DWORD WINAPI worker(LPVOID) {
             // answers it; Ctrl+Alt+O switches back for the comparison.
             if (overlay::init(g_sections)) {
                 logger::info("");
-                logger::info("TEST BUILD: Ctrl+Alt+O cycles how full-screen overlays are mapped:");
-                logger::info("  STRETCHED -> COVER -> FITTED -> ...");
-                logger::info("  Stretched fills the width and is 34%% wider than authored.");
+                // Cover by default: it fills the width without distorting, which
+                // is the same trade the field-of-view correction makes and the
+                // reason this project calls itself proper.
+                logger::info("Ctrl+Alt+O cycles how full-screen overlays are mapped:");
+                logger::info("  COVER -> FITTED -> STRETCHED -> ...");
                 logger::info("  Cover keeps the proportions and crops 25%% of the height.");
                 logger::info("  Fitted is the game's own behaviour, with the smearing.");
-                overlay::set_mode(overlay::Mode::Stretched);
+                logger::info("  Stretched fills the width and is 34%% wider than authored.");
+                overlay::set_mode(overlay::Mode::Cover);
             }
 
             // On its own thread. It used to run here and block for an hour,
