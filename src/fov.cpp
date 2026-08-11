@@ -326,20 +326,50 @@ void remember_our_output(float value) {
     g_our_outputs[index].store(bits, std::memory_order_relaxed);
 }
 
+// A hair of tolerance, because our own output does not come back unchanged.
+//
+// Caught in the act, on consecutive lines of one log:
+//
+//   CORRECT slot 41  in 48.8492 -> 37.3581      we correct
+//   MISS    slot  5     37.3580 -> 28.2528      corrected again
+//   SCREEN              48.8495 -> 28.2528      and that reaches the screen
+//
+// Slot 5 receives 37.3580 -- our 37.3581, one ten-thousandth away. The tag lives
+// in the lowest mantissa bits and that rounding destroys it; exact equality
+// fails for the same reason. So the value looks foreign and gets corrected
+// twice.
+//
+// 0.0001 on 37.36 is 2.7e-6 relative. The distance between an authored value and
+// its corrected form is 48.85 against 37.36, which is 0.3 relative -- five
+// orders of magnitude away. A tolerance of 1e-5 sits between them with room to
+// spare in both directions.
+//
+// This is emphatically not the tolerance that failed before. That one was 5e-4
+// relative against 512 entries, at a time when consecutive ramp outputs differed
+// by 0.03, so the net covered the entire range and matched everything. 1e-5 is
+// fifty times tighter and the values it must separate are five orders of
+// magnitude apart rather than adjacent.
+//
+// The tag is gone from the test for the same reason: it cannot survive the
+// rounding it is supposed to be checked against.
+constexpr float kOursTolerance = 1e-5f;
+
 bool matches_something_we_wrote(float value) {
-    std::uint32_t bits = 0;
-    std::memcpy(&bits, &value, sizeof(bits));
     for (std::size_t i = 0; i < kOutputRing; ++i) {
-        if (g_our_outputs[i].load(std::memory_order_relaxed) == bits) {
+        const std::uint32_t bits = g_our_outputs[i].load(std::memory_order_relaxed);
+        if (bits == 0) {
+            continue;
+        }
+        float ours = 0.0f;
+        std::memcpy(&ours, &bits, sizeof(ours));
+        if (std::fabs(value - ours) <= std::fabs(ours) * kOursTolerance) {
             return true;
         }
     }
     return false;
 }
 
-bool is_our_own_output(float value) {
-    return carries_tag(value) && matches_something_we_wrote(value);
-}
+bool is_our_own_output(float value) { return matches_something_we_wrote(value); }
 
 // One correction per frame, during a ramp.
 //
