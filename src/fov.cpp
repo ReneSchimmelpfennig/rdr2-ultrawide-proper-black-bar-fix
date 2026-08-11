@@ -117,6 +117,7 @@ constexpr int kMaxRampLines = 600;
 std::atomic<int> g_ramp_lines{0};
 std::atomic<DWORD> g_ramp_tick{0};
 float g_ramp_last_out = 0.0f;
+std::atomic<std::size_t> g_ramp_last_slot{static_cast<std::size_t>(-1)};
 
 constexpr std::uint32_t kTagMask = 0x000000FFu;
 constexpr std::uint32_t kTagValue = 0x000000A5u;
@@ -349,16 +350,38 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // measured steps varied from 0.0086 to 0.0160, and whether that is the
         // game's pacing or something of ours cannot be told without knowing how
         // long the frame took.
-        if (in_transition && std::strcmp(decision, "CORRECT") == 0 &&
+        // Log the correction, and also whatever happened to the structure that
+        // was corrected last time. On the three bad frames the usual camera was
+        // passed over, and the reason it was passed over is the whole question;
+        // the previous trace recorded only the winner and so could not answer
+        // it.
+        const bool is_correction = std::strcmp(decision, "CORRECT") == 0;
+        const bool was_the_usual_camera =
+            slot != kNoSlot && slot == g_ramp_last_slot.load(std::memory_order_relaxed);
+
+        if (in_transition && (is_correction || was_the_usual_camera) &&
             g_ramp_lines.load(std::memory_order_relaxed) < kMaxRampLines) {
             g_ramp_lines.fetch_add(1, std::memory_order_relaxed);
             const DWORD now = GetTickCount();
             const DWORD previous_tick = g_ramp_tick.exchange(now, std::memory_order_relaxed);
             const long interval =
                 previous_tick == 0 ? 0 : static_cast<long>(now) - static_cast<long>(previous_tick);
-            logger::info("RAMP  w {:.4f}  in {:8.4f}  out {:8.4f}  dFOV {:+7.4f}  {:3d} ms", weight,
-                         original, final_value, final_value - g_ramp_last_out, interval);
-            g_ramp_last_out = final_value;
+            // Slot, destination and shader constant are in here because the
+            // first version of this trace proved that three frames per ramp
+            // arrive with 45.0000 instead of the cutscene camera's 48.8400 --
+            // and then could not say *which* structure those three were, nor
+            // what the shader constant was at that moment. Without those two
+            // columns the only way to choose a fix is to guess, and the guess I
+            // made from the incomplete trace broke the picture outright.
+            logger::info(
+                "RAMP  {:<8} w {:.4f}  slot {:<3} dst 0x{:012X}  in {:8.4f}  out {:8.4f}"
+                "  shader {:8.4f}  prev {:8.4f}  dFOV {:+7.4f}  {:3d} ms",
+                decision, weight, slot == kNoSlot ? -1 : static_cast<int>(slot), dst, original,
+                final_value, shader_now, previous_now, final_value - g_ramp_last_out, interval);
+            if (is_correction) {
+                g_ramp_last_out = final_value;
+                g_ramp_last_slot.store(slot, std::memory_order_relaxed);
+            }
         }
     };
 
