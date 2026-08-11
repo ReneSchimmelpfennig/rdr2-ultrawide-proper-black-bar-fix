@@ -1,3 +1,59 @@
+# The transition judder
+
+A full day of measurement on this. Five genuine bugs were found and fixed, all
+of them confirmed with numbers, and the visible symptom is still there. That
+combination is the important part of this note.
+
+## Fixed, each one measured
+
+| What | Evidence |
+|---|---|
+| `kShaderMatch` was 5e-3 relative -- ±0.22° at 45° | An idle state parked on 45.0000 drifted into the window whenever the rendered value crossed 45, and *took the role away* from the real camera. Now 1e-4. |
+| One correction per frame let the game overwrite it | The rendered structure is called twice per frame during a fade; the game's later write was waved through. The shader constant read 51.2x while we wrote 40.x. |
+| Correcting a second structure in the same frame | A step of −0.295 where every other frame stepped −0.155, exactly twice. Guard now keys on the slot. |
+| The tag verification checked the wrong table | `finish()` writes to `g_dst_last_final` on *every* path, so it holds authored values too, and a chance-tagged authored value found itself there. 300 of 300 uncorrected frames left through `skip-own`. Now a dedicated ring. |
+| Our own output returns rounded | `37.3581` came back as `37.3580`; the tag lives in the bits that rounding destroys. Exact matching failed for the same reason. Now 1e-5 relative against the ring. |
+
+After all of that: `MISS` 0, `NOCORR` 0. The internal accounting is clean.
+
+## What is left, and why it is not another bug of the same kind
+
+The screen still alternates between the corrected and the authored value:
+
+```
+39.3141 -> 51.2802 -> 39.3112 -> 51.2744 -> 39.3024 -> 51.2642
+```
+
+Six full cycles, and **our instruments report nothing** -- no missed correction,
+no double correction. The game is rendering a camera that we do not classify as
+the rendered one, and there is no reason it should tell us.
+
+That is the limit of the design, not a defect inside it. Identifying the
+rendered camera from the shader constant is inherently one frame late and
+inherently ambiguous when several structures carry plausible values.
+
+## What would actually solve it
+
+Correct where the value is *consumed* -- at the projection -- rather than where
+it is stored. No frame of lag, no question which structure is meant.
+
+This is the approach rejected at the start of the project, because the
+projection matrix is also built for shadows and reflections, so the correction
+would have to be gated to the main view. It is a rewrite, not an adjustment.
+
+A read watchpoint was armed to find the consumers, but it landed on the FOV
+master global (`+0x3EA0BE0`) rather than on a camera structure, because the
+render slot happened to *be* that global in that run. It found two accessors:
+`+0x173EDC` (the getter) and `+0x17007B` (inside `ApplyCameraState`). Neither is
+the projection. Re-running it against a camera structure whose address is not
+the master would be the first step.
+
+## Cost of doing nothing
+
+Two jumps entering a cutscene, one leaving, each at a camera cut where the whole
+picture changes anyway. `F7` disables the correction entirely if it ever gets in
+the way.
+
 # Next session: the 2D layer
 
 Everything else works. This is the one open problem.
