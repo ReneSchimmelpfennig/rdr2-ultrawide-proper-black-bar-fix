@@ -36,10 +36,14 @@ bool set_disabled(bool disabled);
 // which must not be mistaken for "the transform does not matter".
 [[nodiscard]] bool found();
 
-// Reads the patch site back and logs whether it still holds what we wrote.
-// RDR2.exe is Arxan-protected and a restored patch looks exactly like a
-// transform that turned out to be irrelevant.
-void verify();
+// Logs how often the transform ran, from where, and what it did to the values.
+//
+// This exists because the byte patch could only ever answer "did the picture
+// move", and a picture that does not move has now been the least informative
+// outcome three times running. Call count answers the prior question -- whether
+// the code executes at all -- and the return addresses name the callers, which
+// is the data the fallback plan was going to cost a whole session to collect.
+void report(std::uintptr_t module_base);
 
 void restore();
 

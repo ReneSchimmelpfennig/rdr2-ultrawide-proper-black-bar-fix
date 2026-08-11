@@ -43,6 +43,9 @@ std::atomic<bool> g_request_2d_search{false};
 // instead of relying on the picture.
 std::uintptr_t g_letterbox_anchor = 0;
 
+// So the hotkey thread can turn return addresses into module offsets.
+std::uintptr_t g_module_base = 0;
+
 // Refuse to do anything if we somehow got loaded into a different process --
 // every signature in patterns.h is specific to RDR2.exe.
 bool host_is_rdr2() {
@@ -374,8 +377,8 @@ void run_hotkeys(unsigned int duration_ms) {
                 logger::info("  ... but the site was never found -- nothing changed, so an");
                 logger::info("      unchanged picture says nothing here");
             }
+            uibox::report(g_module_base);
             uibox::set_disabled(!uibox::disabled());
-            uibox::verify();
         }
         if (combo_pressed('A', aspect_key)) {
             logger::info("Ctrl+Alt+A pressed");
@@ -530,12 +533,11 @@ DWORD WINAPI worker(LPVOID) {
             // first place -- toggling mid-cutscene only answers whether it is
             // applied per frame.
             if (uibox::init(mem::executable_sections(module))) {
+                g_module_base = module.base;
                 logger::info("");
-                logger::info("TEST BUILD: the UI's 16:9 boxing is disabled from startup.");
-                logger::info("  Ctrl+Alt+U toggles it. The gameplay HUD goes through the same");
-                logger::info("  path, so expect it to move too -- that is information, not a bug.");
+                logger::info("TEST BUILD: the UI's 16:9 boxing is hooked and disabled from start.");
+                logger::info("  Ctrl+Alt+U logs who called it and with what, then toggles it.");
                 uibox::set_disabled(true);
-                uibox::verify();
             }
 
             // On its own thread. It used to run here and block for an hour,
@@ -604,9 +606,30 @@ DWORD WINAPI worker(LPVOID) {
         // marker files above stay for the tools nobody needs mid-session, but
         // anything that has to be triggered while playing goes by key: the game
         // process cannot see files created by other processes here.
+        // Report the uibox measurement on a timer as well as on the key. Two
+        // sessions have already been spent on a hotkey that was mistyped or
+        // forgotten; the answer to "does this code run at all" should not
+        // depend on anyone remembering to ask.
+        const DWORD started = GetTickCount();
+        bool reported_early = false;
+        bool reported_late = false;
+
         while (data) {
             if (g_request_2d_search.exchange(false)) {
                 hunt::find_known_values(data, module.base, weight, 60 * 1000);
+            }
+            const DWORD elapsed = GetTickCount() - started;
+            if (!reported_early && elapsed > 45 * 1000) {
+                logger::info("");
+                logger::info("--- uibox after 45 s (menu or early gameplay) ---");
+                uibox::report(module.base);
+                reported_early = true;
+            }
+            if (!reported_late && elapsed > 5 * 60 * 1000) {
+                logger::info("");
+                logger::info("--- uibox after 5 min (a cutscene should have happened) ---");
+                uibox::report(module.base);
+                reported_late = true;
             }
             Sleep(200);
         }
