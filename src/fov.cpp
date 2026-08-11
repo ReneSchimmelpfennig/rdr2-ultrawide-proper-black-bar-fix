@@ -345,15 +345,24 @@ bool carries_tag(float value) {
 //
 // A dedicated ring, written only where a correction actually happens, is the
 // thing the tag needed to be checked against.
-// Sized for the settled-cutscene mode below, which corrects every camera state
-// rather than one: that is roughly 28 writes per frame, so 32 entries would hold
-// barely a single frame and a value copied onwards two frames later would look
-// foreign and be corrected a second time. 256 covers about nine frames.
+// Back to 32.
 //
-// Enlarging it is only safe because the comparison is exact. The ring that
-// failed before compared with a tolerance, where more entries meant a wider net
-// and eventually matched everything.
-constexpr std::size_t kOutputRing = 256;
+// It was raised to 256 for the "correct every camera state" experiment, which
+// wrote about 28 values per frame. That experiment compounded and was reverted;
+// only one or two corrections per frame are written now, so 256 entries hold
+// several seconds of history from several different cameras -- and every stale
+// entry is another chance for the comparison below to match something it should
+// not.
+//
+// That matters because the comparison has a tolerance, and the tolerance is
+// necessarily loose enough to be fooled. Seen in a log: our correction of the
+// gameplay camera was 39.3139 while the cutscene camera's *authored* value was
+// 39.3141 -- 5e-6 apart, inside the 1e-5 window. The authored value was taken
+// for ours, left uncorrected, and rendered: one frame, one flash.
+//
+// 32 entries still cover a good half second of propagation at the current write
+// rate, and cut the number of values that can collide by eight.
+constexpr std::size_t kOutputRing = 32;
 std::atomic<std::uint32_t> g_our_outputs[kOutputRing]{};
 std::atomic<std::size_t> g_output_next{0};
 
@@ -887,6 +896,13 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         case Mode::Corrected: {
             if (weight <= 0.0f) {
                 g_reached_settled.store(false, std::memory_order_relaxed);
+                // Nothing we corrected in the last cutscene can legitimately
+                // arrive during gameplay, so keeping those values around only
+                // gives the tolerance more chances to mistake an authored value
+                // for one of ours.
+                for (std::size_t i = 0; i < kOutputRing; ++i) {
+                    g_our_outputs[i].store(0, std::memory_order_relaxed);
+                }
                 finish(original, "gameplay");  // leave the camera exactly as authored
                 return;
             }
