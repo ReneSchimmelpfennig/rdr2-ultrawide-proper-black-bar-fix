@@ -111,6 +111,13 @@ constexpr float kShaderMatch = 5e-3f;  // relative
 //
 // An authored value can carry the pattern by chance, once in 256. The cost is a
 // single uncorrected frame, which nobody can see.
+// The compact ramp trace. Big enough for several transitions in and out, small
+// enough that the log stays readable.
+constexpr int kMaxRampLines = 600;
+std::atomic<int> g_ramp_lines{0};
+std::atomic<DWORD> g_ramp_tick{0};
+float g_ramp_last_out = 0.0f;
+
 constexpr std::uint32_t kTagMask = 0x000000FFu;
 constexpr std::uint32_t kTagValue = 0x000000A5u;
 
@@ -327,6 +334,31 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 "  shader {:9.4f}  -> {:9.4f}{}",
                 decision, slot == kNoSlot ? -1 : static_cast<int>(slot), dst, weight, original,
                 previous_now, shader_now, final_value, in_transition ? "  [ramp]" : "");
+        }
+
+        // A second, compact trace: one line per corrected frame, for the whole
+        // ramp.
+        //
+        // The log above records every decision, which is two dozen states per
+        // frame, so its 120-line budget is spent after four frames of a ramp
+        // that lasts about eighty. Every attempt at the transition judder so far
+        // was therefore argued from six percent of the evidence, mine included.
+        // This costs one line per frame and covers the whole thing.
+        //
+        // The interval is in here because the weight advances with frame time:
+        // measured steps varied from 0.0086 to 0.0160, and whether that is the
+        // game's pacing or something of ours cannot be told without knowing how
+        // long the frame took.
+        if (in_transition && std::strcmp(decision, "CORRECT") == 0 &&
+            g_ramp_lines.load(std::memory_order_relaxed) < kMaxRampLines) {
+            g_ramp_lines.fetch_add(1, std::memory_order_relaxed);
+            const DWORD now = GetTickCount();
+            const DWORD previous_tick = g_ramp_tick.exchange(now, std::memory_order_relaxed);
+            const long interval =
+                previous_tick == 0 ? 0 : static_cast<long>(now) - static_cast<long>(previous_tick);
+            logger::info("RAMP  w {:.4f}  in {:8.4f}  out {:8.4f}  dFOV {:+7.4f}  {:3d} ms", weight,
+                         original, final_value, final_value - g_ramp_last_out, interval);
+            g_ramp_last_out = final_value;
         }
     };
 
