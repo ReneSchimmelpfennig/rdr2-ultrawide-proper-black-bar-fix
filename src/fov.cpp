@@ -39,7 +39,28 @@ Config g_config;
 std::atomic<int> g_calls{0};
 constexpr int kLoggedCalls = 8;
 
-std::atomic<float> g_strength{1.0f};
+// DIAGNOSTIC BUILD -- set back to 1.0f before shipping anything.
+//
+// The transition judder needs one question answered that nothing measured so far
+// can answer: is it the field-of-view correction at all? The values we write are
+// smooth, complete, and demonstrably reach the screen -- shader[n] equals
+// out[n-1] to four decimals -- so whatever is visible is not in those numbers.
+//
+// F7 was supposed to settle it in game, and left no trace in the log at all, so
+// that attempt proved nothing. Compiling the answer in removes the dependency on
+// a keypress: bars still removed, overlays still fixed, correction dormant.
+//
+//   still juddering -> not the correction. It comes from removing the bars or
+//                      from the 2D layer, and a week has been spent in the wrong
+//                      place.
+//   gone            -> it is the correction, and the suspect is the shape of the
+//                      ramp rather than its values: `in` sits at a constant
+//                      51.2820 for the whole transition, so every degree of the
+//                      visible movement is ours -- 14 of them in 1.3 seconds,
+//                      which the unmodded game never does. That would also
+//                      explain why a longer transition looks worse.
+constexpr float kStartingStrength = 0.0f;
+std::atomic<float> g_strength{kStartingStrength};
 std::atomic<bool> g_force{false};
 std::atomic<bool> g_flatten{false};
 std::atomic<int> g_flatten_logged{0};

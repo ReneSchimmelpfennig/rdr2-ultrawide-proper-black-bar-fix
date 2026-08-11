@@ -68,6 +68,10 @@ void report_environment() {
     // This line does.
     logger::info("RDR2 Ultrawide Cutscene Fix {}  (built {} {})", PLUGIN_VERSION, __DATE__,
                  __TIME__);
+    if (fov::strength() == 0.0f) {
+        logger::info("*** DIAGNOSTIC BUILD: the field-of-view correction starts DISABLED. ***");
+        logger::info("*** Bars are still removed. F10 or F12 brings the correction back.  ***");
+    }
     logger::info("host RDR2.exe version {}",
               mem::main_module_version().empty() ? "<unknown>" : mem::main_module_version());
 
