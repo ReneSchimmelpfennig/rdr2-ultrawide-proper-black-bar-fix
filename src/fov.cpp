@@ -1105,7 +1105,16 @@ void clamp_detour(std::uintptr_t camera) {
     float after = 0.0f;
     std::memcpy(&after, reinterpret_cast<const void*>(camera + patterns::kFocalClampFov),
                 sizeof(after));
-    if (after == before) {
+
+    // A threshold rather than inequality. The round trip through focal length
+    // and back is not bit-exact, so the clamp "changes" the value on almost
+    // every call by less than a ten-thousandth of a degree -- the log filled
+    // with lines reading "wanted 50.9957 instead of our 50.9957". Those are
+    // rounding, not a clamp, and restoring them is work for nothing.
+    //
+    // A real clamp moves degrees, not fractions of a thousandth.
+    constexpr float kMeaningful = 0.001f;
+    if (std::fabs(after - before) < kMeaningful) {
         return;
     }
     std::memcpy(reinterpret_cast<void*>(camera + patterns::kFocalClampFov), &before,
