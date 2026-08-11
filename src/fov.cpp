@@ -220,6 +220,9 @@ std::atomic<unsigned> g_screen_lines{0};
 std::atomic<float> g_last_screen{0.0f};
 std::atomic<float> g_prev_weight{0.0f};
 
+constexpr unsigned kMaxNocorrLines = 300;
+std::atomic<unsigned> g_nocorr_lines{0};
+
 constexpr std::uint32_t kTagMask = 0x000000FFu;
 constexpr std::uint32_t kTagValue = 0x000000A5u;
 
@@ -537,6 +540,26 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 logger::info("SCREEN w {:.4f}  {:8.4f} -> {:8.4f}  ({:+7.4f})", weight, last,
                              shader_now, shader_now - last);
             }
+        }
+
+        // Which exit did an uncorrected frame take?
+        //
+        // The screen trace proves single frames still go uncorrected in the
+        // settled part of a cutscene -- 39.3082 -> 29.7674 -> 39.2995 on three
+        // consecutive frames, corrected, then not, then corrected again. Nine
+        // and a half degrees each way.
+        //
+        // There are several ways out of this function that leave the value
+        // alone, and none of them says so at full weight, so the culprit is
+        // still a guess. This names it: the rendered camera, at settled weight,
+        // not corrected.
+        if (weight >= kSettledWeight && is_rendered &&
+            std::strcmp(decision, "CORRECT") != 0 &&
+            g_nocorr_lines.fetch_add(1, std::memory_order_relaxed) < kMaxNocorrLines) {
+            logger::info("NOCORR w {:.4f}  slot {:<3} decision {:<8} in {:8.4f}  prev {:8.4f}"
+                         "  shader {:8.4f}",
+                         weight, slot == kNoSlot ? -1 : static_cast<int>(slot), decision, original,
+                         previous_now, shader_now);
         }
 
         // Did the game render what we wrote?
