@@ -211,6 +211,10 @@ constexpr unsigned kMaxMissLines = 200;
 std::atomic<unsigned> g_miss_lines{0};
 std::atomic<float> g_last_our_output{0.0f};
 
+constexpr unsigned kMaxScreenLines = 4000;
+std::atomic<unsigned> g_screen_lines{0};
+std::atomic<float> g_last_screen{0.0f};
+
 constexpr std::uint32_t kTagMask = 0x000000FFu;
 constexpr std::uint32_t kTagValue = 0x000000A5u;
 
@@ -458,6 +462,27 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     const auto finish = [&](float final_value, const char* decision) {
         if (slot != kNoSlot) {
             g_dst_last_final[slot].store(final_value, std::memory_order_relaxed);
+        }
+
+        // What is actually on screen, frame by frame.
+        //
+        // Every measurement so far has been of one of our own internal
+        // quantities, and two of them turned out to measure my own mistakes
+        // rather than the game. The shader constant is not ours: it carries the
+        // field of view that reached the picture. Whatever hop is visible has to
+        // appear in this column, or it is not a field-of-view hop at all.
+        //
+        // It changes once per frame, so logging only its changes gives one line
+        // per frame and no more. A hop reads as A -> B -> A within a few lines.
+        if (weight > 0.0f && shader_now != 0.0f &&
+            g_screen_lines.load(std::memory_order_relaxed) < kMaxScreenLines) {
+            const float last = g_last_screen.load(std::memory_order_relaxed);
+            if (std::fabs(shader_now - last) > 1e-4f) {
+                g_last_screen.store(shader_now, std::memory_order_relaxed);
+                g_screen_lines.fetch_add(1, std::memory_order_relaxed);
+                logger::info("SCREEN w {:.4f}  {:8.4f} -> {:8.4f}  ({:+7.4f})", weight, last,
+                             shader_now, shader_now - last);
+            }
         }
 
         // Did the game render what we wrote?
