@@ -30,8 +30,9 @@ vFOV_new = 2 * atan(k * tan(vFOV_old / 2))  // note: k scales the tangent
 ```
 
 At 3440x1440, `k` works out to exactly `2560/3440` — the pillarbox ratio the
-game itself computes. The correction is blended in and out using the game's own
-letterbox animation, so the transition matches the bars rather than snapping.
+game itself computes. The correction eases in with the game's own letterbox
+animation and is complete at 40% of it, so the framing settles early instead of
+arriving at the end of the fade.
 
 ## Status
 
@@ -41,7 +42,22 @@ letterbox animation, so the transition matches the bars rather than snapping.
 | Fade in / fade out | smooth, follows the game's own easing |
 | Black bars | removed, pillarbox and letterbox alike |
 | Full-screen overlays and the intro video | fixed — they cover the whole screen, no smearing |
+| Cinematic camera | corrected, including the cut into the shot |
 | **Credit inserts and subtitles** | **not fixed yet — see below** |
+| Rare single-frame flash | see below |
+
+### Known issue: a rare single-frame flash
+
+Very occasionally one frame is rendered without the correction and the picture
+flashes. The cause is measured rather than suspected: the plugin recognises its
+own output by value, and two different cameras can hold values that close by
+coincidence. In one log our corrected 39.3139 sat 5e-6 away from another
+camera's authored 39.3141 — inside the tolerance, so the authored value was
+mistaken for ours and left alone.
+
+Tightening the tolerance is not the answer; the rounding it has to catch is only
+a factor of two away. The clean fix is to ask "did we write this value into
+*this* camera", which is a larger change.
 
 ### Fixed: the artefacts in the former bar area
 
@@ -50,25 +66,15 @@ The intro's photographic filter and the intro video sample a 1920x1080 texture �
 that, the sampler has nothing valid left and repeats the edge column, which is
 the horizontal smearing that appears once the bars are gone.
 
-The plugin intercepts that mapping. A 16:9 asset cannot be whole, undistorted
-and full-width on a 21:9 screen at once, so there are three ways to spend the
-difference, cycled with `Ctrl+Alt+O`:
-
-| Mode | What it costs |
-|---|---|
-| **Cover** (default) | proportions kept, 25% of the height cropped |
-| Fitted | the game's own behaviour, including the smearing |
-| Stretched | full width, 34% wider than authored |
+The plugin intercepts that mapping and scales the asset up until it covers the
+width, keeping its proportions and cropping 25% of the height — the same trade
+the field-of-view correction makes.
 
 ### Known issue: credit inserts and subtitles
 
 Credit inserts and subtitles are still laid out for the old 2560x1090 window and
 appear too small. They have nothing to do with the artefacts above — that turned
 out to be two separate problems wearing one description.
-
-Press **F8** to bring the bars back if it bothers you. The field-of-view
-correction stays active, so you get correct framing inside the boxed-in frame —
-not the goal of this project, but a usable state.
 
 What is settled so far, each of it measured rather than assumed:
 
@@ -89,30 +95,12 @@ evidence and the plan. Contributions welcome.
 ## Requirements
 
 - Red Dead Redemption 2, tested on **1.0.1491.50**
-- An ASI loader, e.g. [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)
+- An ASI loader — [Ultimate ASI Loader, x64 `version.dll`](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/download/x64-latest/version-x64.zip)
 - An ultrawide display. On 16:9 the plugin computes `k = 1` and does nothing.
 
 ## Installation
 
 Copy `RDR2UltrawideCutsceneFix.asi` into the game folder, next to `RDR2.exe`.
-That folder is usually writable only by administrators, so the copy needs an
-elevated shell.
-
-## Hotkeys
-
-| Key | Effect |
-|---|---|
-| `F7` | correction on / off |
-| `F8` | black bars on / off |
-| `F9` / `F10` | correction strength -0.05 / +0.05 |
-| `F11` | apply the correction during gameplay too (for still comparisons) |
-| `F12` | reset strength to 1.00 |
-| `Ctrl+Alt+O` | overlay mapping: cover / fitted / stretched |
-
-Strength `1.00` is the geometrically correct value. It is adjustable because the
-visible window (2.349:1) and an ultrawide screen (2.389:1) do not match exactly:
-matching the width crops 1.7% vertically, matching the height shows 1.7% extra
-horizontally. `0.95` matches the height instead of the width.
 
 ## Log
 

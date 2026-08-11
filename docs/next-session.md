@@ -1,8 +1,24 @@
-# The transition judder
+# The transition judder — solved
 
-A full day of measurement on this. Five genuine bugs were found and fixed, all
-of them confirmed with numbers, and the visible symptom is still there. That
-combination is the important part of this note.
+Seven causes, each found by measurement and each fixed. The symptom that started
+it — the picture jumping back and forth at every cutscene transition — is gone.
+What remains is a rare single-frame flash, described at the end.
+
+The two that mattered most were both invisible to reasoning and obvious in a
+log:
+
+**The focal-length clamp.** A function runs after `ApplyCameraState` and
+rewrites the field of view: it converts to a focal length, clamps that to the
+camera's lens limits, and converts back. Our correction moves the focal length
+from 25.0 mm to 33.6 mm, so on a camera whose lens tops out at its authored
+value the clamp put the field of view back exactly where it was. Found with a
+read watchpoint on an address a correction had actually landed in.
+
+**Correcting in that clamp as well.** It sees two camera objects in a whole
+session and one of them per frame; `ApplyCameraState` sees sixty structures and
+twenty-eight calls per frame. And it runs on the camera being finalised, a frame
+before the shader constant reveals which camera was rendered — which is exactly
+the frame that used to flash at a cut.
 
 ## Fixed, each one measured
 
@@ -16,43 +32,24 @@ combination is the important part of this note.
 
 After all of that: `MISS` 0, `NOCORR` 0. The internal accounting is clean.
 
-## What is left, and why it is not another bug of the same kind
+## What is left: a rare single-frame flash
 
-The screen still alternates between the corrected and the authored value:
+The plugin recognises its own output by value, within 1e-5 relative. Two
+different cameras can hold values that close by coincidence -- measured in one
+log, our corrected 39.3139 against another camera's authored 39.3141, 5e-6
+apart. The authored value is then taken for ours, left uncorrected, and
+rendered.
 
-```
-39.3141 -> 51.2802 -> 39.3112 -> 51.2744 -> 39.3024 -> 51.2642
-```
+Tightening the tolerance is not available: the rounding it has to catch is
+2.7e-6, only a factor of two away. The ring was shrunk from 256 to 32 entries
+and is cleared when gameplay resumes, which cuts the number of values that can
+collide, and that made it noticeably rarer.
 
-Six full cycles, and **our instruments report nothing** -- no missed correction,
-no double correction. The game is rendering a camera that we do not classify as
-the rendered one, and there is no reason it should tell us.
-
-That is the limit of the design, not a defect inside it. Identifying the
-rendered camera from the shader constant is inherently one frame late and
-inherently ambiguous when several structures carry plausible values.
-
-## What would actually solve it
-
-Correct where the value is *consumed* -- at the projection -- rather than where
-it is stored. No frame of lag, no question which structure is meant.
-
-This is the approach rejected at the start of the project, because the
-projection matrix is also built for shadows and reflections, so the correction
-would have to be gated to the main view. It is a rewrite, not an adjustment.
-
-A read watchpoint was armed to find the consumers, but it landed on the FOV
-master global (`+0x3EA0BE0`) rather than on a camera structure, because the
-render slot happened to *be* that global in that run. It found two accessors:
-`+0x173EDC` (the getter) and `+0x17007B` (inside `ApplyCameraState`). Neither is
-the projection. Re-running it against a camera structure whose address is not
-the master would be the first step.
-
-## Cost of doing nothing
-
-Two jumps entering a cutscene, one leaving, each at a camera cut where the whole
-picture changes anyway. `F7` disables the correction entirely if it ever gets in
-the way.
+The clean fix is to ask **"did we write this value into *this* camera"** rather
+than "did we write this value". The address is available at both correction
+sites. The risk to weigh is that our output legitimately propagates to other
+structures, so a per-camera test must not treat those as foreign and correct
+them again -- which is the compounding that has bitten twice.
 
 # Next session: the 2D layer
 

@@ -590,8 +590,21 @@ DWORD WINAPI worker(LPVOID) {
             // unreachable in the one mode people actually run. A marker file
             // sat there being ignored and the search it asked for never
             // happened.
-            if (HANDLE keys = CreateThread(nullptr, 0, hotkey_thread, nullptr, 0, nullptr)) {
-                CloseHandle(keys);
+            // Hotkeys are off in shipped builds.
+            //
+            // They were how the correction was dialled in, and by the end there
+            // were nine of them, several driving experiments that have since
+            // been decided one way or the other. For anyone installing the mod
+            // that is noise, and a key that changes the picture without
+            // explanation is worse than no key at all.
+            //
+            // The code stays. Flip this to get the whole set back for a
+            // debugging session.
+            constexpr bool kEnableHotkeys = false;
+            if (kEnableHotkeys) {
+                if (HANDLE keys = CreateThread(nullptr, 0, hotkey_thread, nullptr, 0, nullptr)) {
+                    CloseHandle(keys);
+                }
             }
         } else if (fov_ready && (fov_config.mode == fov::Mode::Watch ||
                                  fov_config.mode == fov::Mode::TestWatch)) {
