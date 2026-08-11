@@ -43,8 +43,10 @@ std::atomic<bool> g_request_2d_search{false};
 // instead of relying on the picture.
 std::uintptr_t g_letterbox_anchor = 0;
 
-// So the hotkey thread can turn return addresses into module offsets.
+// So the hotkey thread can turn return addresses into module offsets, and can
+// install the uibox census on demand.
 std::uintptr_t g_module_base = 0;
+std::vector<mem::NamedRegion> g_sections;
 
 // Refuse to do anything if we somehow got loaded into a different process --
 // every signature in patterns.h is specific to RDR2.exe.
@@ -374,11 +376,11 @@ void run_hotkeys(unsigned int duration_ms) {
         if (combo_pressed('U', uibox_key)) {
             logger::info("Ctrl+Alt+U pressed");
             if (!uibox::found()) {
-                logger::info("  ... but the site was never found -- nothing changed, so an");
-                logger::info("      unchanged picture says nothing here");
+                logger::info("  installing the 16:9-boxing census (measured dead once already)");
+                uibox::init(g_sections);
+            } else {
+                uibox::report(g_module_base);
             }
-            uibox::report(g_module_base);
-            uibox::set_disabled(!uibox::disabled());
         }
         if (combo_pressed('A', aspect_key)) {
             logger::info("Ctrl+Alt+A pressed");
@@ -527,18 +529,14 @@ DWORD WINAPI worker(LPVOID) {
                 logger::info("safearea: aspect probe armed but inactive (Ctrl+Alt+A)");
             }
 
-            // The eighth attempt at the 2D layer, and the first holding the
-            // transform itself instead of a value suspected of feeding it.
-            // On from startup so the layout is built without the boxing in the
-            // first place -- toggling mid-cutscene only answers whether it is
-            // applied per frame.
-            if (uibox::init(mem::executable_sections(module))) {
-                g_module_base = module.base;
-                logger::info("");
-                logger::info("TEST BUILD: the UI's 16:9 boxing is hooked and disabled from start.");
-                logger::info("  Ctrl+Alt+U logs who called it and with what, then toggles it.");
-                uibox::set_disabled(true);
-            }
+            // uibox is deliberately NOT installed here any more. Both functions
+            // in that family were hooked and counted through a full cutscene and
+            // came back at zero calls -- measured, with the field-of-view detour
+            // firing in the same run to prove the hooks worked at all. They are
+            // dead code, so there is nothing to switch off. Ctrl+Alt+U still
+            // installs the census for anyone wanting to repeat it.
+            g_module_base = module.base;
+            g_sections = mem::executable_sections(module);
 
             // On its own thread. It used to run here and block for an hour,
             // which meant everything below -- every diagnostic tool -- was
@@ -623,26 +621,30 @@ DWORD WINAPI worker(LPVOID) {
                 hunt::find_known_values(data, module.base, weight, 60 * 1000);
             }
 
-            if (is_readable(weight, sizeof(float))) {
-                const float w = read_float(weight);
-                if (!in_cutscene && w > 0.5f) {
-                    in_cutscene = true;
-                    logger::info("");
-                    logger::info("--- uibox: a cutscene just started ---");
-                    uibox::report(module.base);
-                } else if (in_cutscene && w < 0.01f) {
-                    in_cutscene = false;
-                    logger::info("");
-                    logger::info("--- uibox: the cutscene just ended (this is the count that"
-                                 " matters) ---");
+            // Only while a census is installed, i.e. after Ctrl+Alt+U. The
+            // cutscene edges are the moments worth reporting: the first run of
+            // this reported "0 calls" from the main menu, which was true and
+            // nearly worthless.
+            if (uibox::found()) {
+                if (is_readable(weight, sizeof(float))) {
+                    const float w = read_float(weight);
+                    if (!in_cutscene && w > 0.5f) {
+                        in_cutscene = true;
+                        logger::info("");
+                        logger::info("--- uibox: a cutscene just started ---");
+                        uibox::report(module.base);
+                    } else if (in_cutscene && w < 0.01f) {
+                        in_cutscene = false;
+                        logger::info("");
+                        logger::info("--- uibox: the cutscene just ended (the count that matters)"
+                                     " ---");
+                        uibox::report(module.base);
+                    }
+                }
+                if (GetTickCount() - last_periodic > 60 * 1000) {
+                    last_periodic = GetTickCount();
                     uibox::report(module.base);
                 }
-            }
-
-            if (GetTickCount() - last_periodic > 60 * 1000) {
-                last_periodic = GetTickCount();
-                logger::info("--- uibox, periodic ---");
-                uibox::report(module.base);
             }
             Sleep(200);
         }

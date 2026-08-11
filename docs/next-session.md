@@ -2,7 +2,37 @@
 
 Everything else works. This is the one open problem.
 
-## Start here: the boxing transform, found
+## Settled: the whole ultrawide-UI family is dead code
+
+The lead described below was the best one the investigation had, and it is
+finished. Both functions were hooked and counted through a complete cutscene:
+
+```
+--- uibox: the cutscene just ended (the count that matters) ---
+uibox: box transform 0 call(s), 0 distinct caller(s); align variant 0 call(s)
+```
+
+Zero, on both, in gameplay and in the cutscene alike. In the same run the
+field-of-view detour fired ten times and corrected normally, which proves the
+hooking machinery worked -- so this is a measurement, not a failure to measure.
+
+That retires `FUN_7ff67526bd30`, `FUN_7ff67526bda8` and the
+`SET_SCRIPT_GFX_ALIGN` family with them, and it explains the earlier byte patch
+that changed nothing: the code never ran.
+
+It also closes the pattern that has been forming. The bar-height native, the
+aspect getter and now the alignment family are all reachable from script and all
+irrelevant to the cutscene 2D layer. **RDR2's cutscene 2D does not appear to go
+through the script-gfx path at all.** Every remaining forward approach is
+looking in that direction, which is why the only sensible next step is the one
+that works backwards.
+
+Go to **Plan A**.
+
+The census is still in `src/uibox.cpp` but is no longer installed at startup;
+`Ctrl+Alt+U` installs it for anyone wanting to repeat the measurement.
+
+## Retired: the boxing transform
 
 Plan C below was meant to be the slow, low-ranked option. It produced the
 answer on the fourth function.
