@@ -26,12 +26,27 @@
 // call counter answers that first.
 namespace overlay {
 
+// A 16:9 asset on a 21:9 screen cannot be shown whole, undistorted and
+// full-width at once. Something has to give, and which of the three is least
+// objectionable is a judgement about pixels, not a calculation.
+enum class Mode {
+    // What the game does: the asset sits in the middle 74% of the width and the
+    // sampler smears its edge columns across the rest.
+    Fitted,
+    // Full width, 34% wider than authored. Invisible on grain and vignette,
+    // visible on text and faces.
+    Stretched,
+    // Proportions kept: scaled up until it covers the width, cropping 25% of
+    // the height. The same trade the field-of-view correction makes.
+    Cover,
+};
+
 bool init(const std::vector<mem::NamedRegion>& sections);
 
-// true = leave the caller's values alone (overlay fills the screen)
-bool set_stretched(bool stretched);
+bool set_mode(Mode mode);
 
-[[nodiscard]] bool stretched();
+[[nodiscard]] Mode mode();
+[[nodiscard]] const char* mode_name();
 [[nodiscard]] bool found();
 
 // Call count and callers. If this is zero after a cutscene with the effect on

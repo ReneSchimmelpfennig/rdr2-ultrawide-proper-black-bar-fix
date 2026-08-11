@@ -2,6 +2,45 @@
 
 Everything else works. This is the one open problem.
 
+## Solved: the artefacts in the former bar area
+
+The intro's full-screen filter and the intro video sample a **1920x1080** --
+16:9 -- texture. RenderDoc's uniforms for those draws carry:
+
+```
++0x50   1.343750     = 1/k
++0x54   1.000000     vertical, untouched
++0x58  -0.171875     = (1 - 1/k)/2
+```
+
+Those are exactly what `FUN_7ff675604f38` returns for the inputs `(1.0, 0.0)`.
+The shader therefore samples with `uv.x * 1.34375 - 0.171875`: the texture's
+left edge lands at x = 0.127907 and everything outside runs past it, where a
+clamping sampler repeats the edge column. That is the horizontal smearing, and
+the vertical 1.0 is why the top and bottom were never affected -- which matches
+what was seen on screen.
+
+`src/overlay.cpp` hooks that function. Confirmed in game: the overlays now fill
+the width and the artefacts are gone.
+
+Three modes, cycled with `Ctrl+Alt+O`, because a 16:9 asset on a 21:9 screen
+cannot be whole, undistorted and full-width at the same time:
+
+| Mode | What it costs |
+|---|---|
+| `Fitted` | the game's own -- smearing at the sides |
+| `Stretched` | 34% wider than authored; invisible on grain, visible on text |
+| `Cover` | proportions kept, 25% of the height cropped |
+
+Still open on this: black bars remain top and bottom during the intro video, and
+they are not the game's letterbox (that is patched out). Most likely they are
+baked into the asset, which would mean the video is 2.35:1 inside a 16:9
+texture. Worth confirming before anyone tries to remove them.
+
+The credit inserts and the subtitles are **not** affected by this and are still
+laid out for the 16:9 box. So the two symptoms had different causes after all --
+which was an assumption of mine for a week, and a wrong one.
+
 ## Correction of aim: the symptom is the overlays, not the subtitles
 
 The subtitles were a probe I chose because they were convenient, not the thing

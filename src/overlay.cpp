@@ -19,8 +19,19 @@ using Fn = void(__fastcall*)(float*, float*);
 
 Fn g_original = nullptr;
 std::uintptr_t g_site = 0;
-std::atomic<bool> g_stretched{false};
+std::atomic<Mode> g_mode{Mode::Fitted};
 std::atomic<unsigned> g_calls{0};
+
+// The scale the game itself would apply, learned by running the original on a
+// scratch pair rather than recomputing it from the resolution. That keeps this
+// correct in windowed mode and at non-native resolutions, for the same reason
+// the field-of-view correction reads k out of the game's own bar height.
+float learn_scale() {
+    float size[2] = {1.0f, 1.0f};
+    float pos[2] = {0.0f, 0.0f};
+    g_original(size, pos);
+    return size[0];  // 1/k on a display wider than 16:9
+}
 
 constexpr int kMaxCallers = 16;
 
@@ -65,8 +76,30 @@ void __fastcall detour(float* size, float* pos) {
     const float size_in = size != nullptr ? *size : 0.0f;
     const float pos_in = pos != nullptr ? *pos : 0.0f;
 
-    if (!g_stretched.load(std::memory_order_relaxed)) {
-        g_original(size, pos);
+    switch (g_mode.load(std::memory_order_relaxed)) {
+        case Mode::Fitted:
+            g_original(size, pos);
+            break;
+
+        case Mode::Stretched:
+            // Nothing at all: the caller's 1.0 and 0.0 reach the shader and the
+            // asset is sampled across the full width.
+            break;
+
+        case Mode::Cover: {
+            // Full width as above, then the vertical axis scaled by k and
+            // recentred -- the asset keeps its proportions and loses its top and
+            // bottom instead. This is the same formula the game applies to the
+            // vertical axis when a display is *narrower* than 16:9, so the shape
+            // of it is the game's own, only the condition differs.
+            const float s = learn_scale();
+            if (s > 1.0f && size != nullptr && pos != nullptr) {
+                const float k = 1.0f / s;
+                size[1] *= k;
+                pos[1] = pos[1] * k + (1.0f - k) * 0.5f;
+            }
+            break;
+        }
     }
 
     record(ret, size_in, pos_in, size != nullptr ? *size : 0.0f, pos != nullptr ? *pos : 0.0f);
@@ -120,17 +153,28 @@ bool init(const std::vector<mem::NamedRegion>& sections) {
     return true;
 }
 
-bool set_stretched(bool value) {
+bool set_mode(Mode value) {
     if (g_site == 0) {
         return false;
     }
-    g_stretched.store(value, std::memory_order_relaxed);
-    logger::info("overlay: full-screen overlays are now {}",
-                 value ? "STRETCHED to the whole screen" : "fitted to 16:9 (original)");
+    g_mode.store(value, std::memory_order_relaxed);
+    logger::info("overlay: mode is now {}", mode_name());
     return true;
 }
 
-bool stretched() { return g_stretched.load(std::memory_order_relaxed); }
+Mode mode() { return g_mode.load(std::memory_order_relaxed); }
+
+const char* mode_name() {
+    switch (g_mode.load(std::memory_order_relaxed)) {
+        case Mode::Fitted:
+            return "FITTED (the game's own: 16:9 in the middle, smearing at the sides)";
+        case Mode::Stretched:
+            return "STRETCHED (full width, 34% wider than authored)";
+        case Mode::Cover:
+            return "COVER (proportions kept, 25% of the height cropped)";
+    }
+    return "?";
+}
 
 bool found() { return g_site != 0; }
 
@@ -139,9 +183,8 @@ void report(std::uintptr_t module_base) {
         return;
     }
     const unsigned calls = g_calls.load(std::memory_order_relaxed);
-    logger::info("overlay: {} call(s), {} distinct caller(s), currently {}", calls,
-                 g_caller_count.load(std::memory_order_relaxed),
-                 g_stretched.load(std::memory_order_relaxed) ? "stretched" : "fitted");
+    logger::info("overlay: {} call(s), {} distinct caller(s), mode {}", calls,
+                 g_caller_count.load(std::memory_order_relaxed), mode_name());
 
     if (calls == 0) {
         logger::info("overlay:   zero calls -- the hook is on the wrong function, and the");

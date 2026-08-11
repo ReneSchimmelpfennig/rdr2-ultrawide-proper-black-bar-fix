@@ -379,7 +379,17 @@ void run_hotkeys(unsigned int duration_ms) {
         if (combo_pressed('O', overlay_key)) {
             logger::info("Ctrl+Alt+O pressed");
             overlay::report(g_module_base);
-            overlay::set_stretched(!overlay::stretched());
+            switch (overlay::mode()) {
+                case overlay::Mode::Stretched:
+                    overlay::set_mode(overlay::Mode::Cover);
+                    break;
+                case overlay::Mode::Cover:
+                    overlay::set_mode(overlay::Mode::Fitted);
+                    break;
+                case overlay::Mode::Fitted:
+                    overlay::set_mode(overlay::Mode::Stretched);
+                    break;
+            }
         }
         if (combo_pressed('U', uibox_key)) {
             logger::info("Ctrl+Alt+U pressed");
@@ -552,9 +562,12 @@ DWORD WINAPI worker(LPVOID) {
             // answers it; Ctrl+Alt+O switches back for the comparison.
             if (overlay::init(g_sections)) {
                 logger::info("");
-                logger::info("TEST BUILD: full-screen overlays are stretched to the whole screen.");
-                logger::info("  Ctrl+Alt+O returns them to the 16:9 fit.");
-                overlay::set_stretched(true);
+                logger::info("TEST BUILD: Ctrl+Alt+O cycles how full-screen overlays are mapped:");
+                logger::info("  STRETCHED -> COVER -> FITTED -> ...");
+                logger::info("  Stretched fills the width and is 34%% wider than authored.");
+                logger::info("  Cover keeps the proportions and crops 25%% of the height.");
+                logger::info("  Fitted is the game's own behaviour, with the smearing.");
+                overlay::set_mode(overlay::Mode::Stretched);
             }
 
             // On its own thread. It used to run here and block for an hour,
