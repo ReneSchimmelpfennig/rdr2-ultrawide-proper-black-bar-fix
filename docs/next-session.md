@@ -2,6 +2,41 @@
 
 Everything else works. This is the one open problem.
 
+## Correction of aim: the symptom is the overlays, not the subtitles
+
+The subtitles were a probe I chose because they were convenient, not the thing
+that actually bothers anyone. The symptoms that matter are the **full-screen
+overlays in the intro** and the **credit inserts**. Whether they share a cause
+with the too-small subtitles was never more than an assumption of mine.
+
+## Settled: it is not the geometry
+
+`tools/dump_overlay_geometry.py` classified all 870 draws of the artefact frame
+by their clip-space extent. 437 write the final image, 251 had readable meshes.
+
+```
+event 7875  verts 4  x [-1.00000 .. +1.00000]  y [+0.75650 .. +1.00000]  FULL SCREEN
+event 7876  verts 4  x [-1.00000 .. +1.00000]  y [-1.00000 .. -0.75650]  FULL SCREEN
+event 7877  verts 4  x [-1.00000 .. -0.74419]  y [-1.00000 .. +1.00000]
+event 7878  verts 4  x [+0.74419 .. +1.00000]  y [-1.00000 .. +1.00000]
+```
+
+Those four are the bars: 0.756502 is `1 - 2*0.121749`, and 0.744186 is `k`.
+**Nothing else in the frame is confined to the box.** The overlays are drawn
+across the whole screen; they only look wrong outside the middle.
+
+So the cause is not the shape of the geometry, and this also confirms the pixel
+history from earlier, which was recorded and then not followed up: a broken
+pixel and a good pixel take the same passes in the same order, and the
+difference is already present in what feeds them. Something an overlay *reads*
+is only correct inside the box.
+
+The next step is `tools/dump_render_targets.py`, which asks the two questions
+nobody has asked yet: does any render target in the frame have the size of the
+framed window, and what do the final full-screen draws actually sample. Constant
+buffers were searched for 2560 and 1090 and came back clean, but the textures
+themselves never were.
+
 ## Settled: the whole ultrawide-UI family is dead code
 
 The lead described below was the best one the investigation had, and it is
