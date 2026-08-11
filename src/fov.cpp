@@ -270,15 +270,34 @@ bool carries_tag(float value) {
 // values we actually left behind. A genuine copy of our output is bit-identical
 // to one of them; a coincidence is not. Sixty-four comparisons, only on the one
 // call in 256 that carries the pattern.
+// CORRECTION: the first version of this compared against g_dst_last_final, and
+// that verified almost nothing.
+//
+// finish() stores a value there on *every* path, including skip-not and
+// gameplay, so the table holds every authored value the game has recently used
+// as well as our own. An authored 39.2995 that hits the tag by chance then finds
+// itself in the table -- put there by another structure a frame earlier -- and
+// is waved through as "ours". The measurement said so plainly: 300 of 300
+// uncorrected frames in a settled cutscene left through skip-own.
+//
+// A dedicated ring, written only where a correction actually happens, is the
+// thing the tag needed to be checked against.
+constexpr std::size_t kOutputRing = 32;
+std::atomic<std::uint32_t> g_our_outputs[kOutputRing]{};
+std::atomic<std::size_t> g_output_next{0};
+
+void remember_our_output(float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const std::size_t index = g_output_next.fetch_add(1, std::memory_order_relaxed) % kOutputRing;
+    g_our_outputs[index].store(bits, std::memory_order_relaxed);
+}
+
 bool matches_something_we_wrote(float value) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
-    const std::size_t known = g_dst_known.load(std::memory_order_acquire);
-    for (std::size_t i = 0; i < known && i < kMaxDestinations; ++i) {
-        const float ours = g_dst_last_final[i].load(std::memory_order_relaxed);
-        std::uint32_t theirs = 0;
-        std::memcpy(&theirs, &ours, sizeof(theirs));
-        if (theirs == bits) {
+    for (std::size_t i = 0; i < kOutputRing; ++i) {
+        if (g_our_outputs[i].load(std::memory_order_relaxed) == bits) {
             return true;
         }
     }
@@ -810,6 +829,9 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     }
 
     result = tag(result);
+    // Only corrections go into the ring. That is the whole point of it: it has
+    // to hold what we wrote, not what the game wrote.
+    remember_our_output(result);
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
     if (ramping) {
         g_corrected_at_weight.store(weight, std::memory_order_relaxed);
