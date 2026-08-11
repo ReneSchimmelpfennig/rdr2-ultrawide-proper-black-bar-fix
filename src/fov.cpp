@@ -120,6 +120,11 @@ std::atomic<unsigned long long> g_clamp_reverts{0};
 std::atomic<int> g_clamp_logged{0};
 std::atomic<unsigned> g_clamp_census{0};
 
+// Correct inside the focal-length clamp as well as in ApplyCameraState. See the
+// long note in clamp_detour. One constant; the failure mode is a picture that is
+// too narrow.
+constexpr bool kCorrectInClamp = true;
+
 // TRIED AND REVERTED. Correcting every camera state in an established cutscene
 // compounds, exactly as the original design did, and the ring did not prevent
 // it.
@@ -1110,11 +1115,50 @@ void clamp_detour(std::uintptr_t camera) {
     // shader constant -- available a frame earlier and unambiguous -- and the
     // correction belongs here instead. If it sees several, it is no better and
     // the idea dies cheaply.
-    if (readable && g_weight_addr != 0) {
+    // Correct here as well, because this is where a new camera can be reached a
+    // frame earlier than anywhere else.
+    //
+    // The census settled it: this clamp sees exactly two camera objects in a
+    // whole session, and exactly one of them per frame in 185 frames out of 209.
+    // ApplyCameraState sees over sixty structures and about twenty-eight calls
+    // per frame. So this is not a better signal by a margin, it is a different
+    // class of signal.
+    //
+    // The one-frame flash at a cut comes from the shader constant still carrying
+    // the previous camera when the new one is first written. This runs on the
+    // camera being finalised, before that frame is drawn, so a camera that
+    // appears here is corrected before it is ever shown uncorrected.
+    //
+    // Safe against double correction for the same reason everything else is:
+    // is_our_own_output recognises the value ApplyCameraState already corrected,
+    // now including the rounding it picks up on the way. If this ever does go
+    // wrong the symptom is unmistakable -- the picture becomes too narrow -- and
+    // it is one constant to switch off.
+    if (kCorrectInClamp && readable && g_weight_addr != 0 && g_config.mode == Mode::Corrected) {
         float w = 0.0f;
         std::memcpy(&w, reinterpret_cast<const void*>(g_weight_addr), sizeof(w));
-        if (w > 0.0f && g_clamp_census.fetch_add(1, std::memory_order_relaxed) < 400) {
-            logger::info("CLAMP w {:.4f}  cam 0x{:012X}  fov {:8.4f}", w, camera, before);
+
+        if (g_clamp_census.fetch_add(1, std::memory_order_relaxed) < 400 && w > 0.0f) {
+            logger::info("CLAMP w {:.4f}  cam 0x{:012X}  fov {:8.4f}{}", w, camera, before,
+                         is_our_own_output(before) ? "  (already ours)" : "");
+        }
+
+        if (w > 0.0f && !is_our_own_output(before) && before > patterns::kFovSanityMin &&
+            before < patterns::kFovSanityMax) {
+            const float bar = read_float(g_bar_addr);
+            double k = framing::correction_factor_from_bars(bar, w);
+            if (!(k > 0.0 && k < 1.0)) {
+                k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
+                                               GetSystemMetrics(SM_CYSCREEN));
+            }
+            const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
+            const double factor = framing::blended_factor(scaled, w);
+            float corrected = static_cast<float>(framing::corrected_vfov_deg(before, factor));
+            corrected = tag(corrected);
+            remember_our_output(corrected);
+            std::memcpy(reinterpret_cast<void*>(camera + patterns::kFocalClampFov), &corrected,
+                        sizeof(corrected));
+            before = corrected;  // so the clamp guard below compares against ours
         }
     }
 
