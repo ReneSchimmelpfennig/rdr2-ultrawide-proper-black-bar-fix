@@ -203,6 +203,14 @@ constexpr unsigned kMaxCutLines = 200;
 std::atomic<unsigned> g_cut_lines{0};
 std::atomic<float> g_dst_last_in[kMaxDestinations]{};
 
+// One degree is far more than the rounding between our write and the shader
+// constant (measured at 0.0000 through whole ramps) and far less than the
+// several degrees a mistaken camera would be off by.
+constexpr float kRenderedMiss = 1.0f;
+constexpr unsigned kMaxMissLines = 200;
+std::atomic<unsigned> g_miss_lines{0};
+std::atomic<float> g_last_our_output{0.0f};
+
 constexpr std::uint32_t kTagMask = 0x000000FFu;
 constexpr std::uint32_t kTagValue = 0x000000A5u;
 
@@ -452,8 +460,35 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             g_dst_last_final[slot].store(final_value, std::memory_order_relaxed);
         }
 
+        // Did the game render what we wrote?
+        //
+        // The shader constant carries the field of view that reached the picture,
+        // one frame late. So comparing it against our own last correction is a
+        // direct test of whether the correction landed in the camera that was
+        // actually used. During the ramps this was measured at a difference of
+        // 0.0000 -- our value was rendered exactly.
+        //
+        // The open question is the settled part of a cutscene, where the game
+        // cuts between shots at 13.6, 18.2, 20.3, 27.0 and 39.3 degrees, and the
+        // gameplay camera's 51.2820 is among the structures in play. If the
+        // rendered-camera test picks the wrong one for a frame at such a cut, we
+        // write a correction twenty degrees off and the picture hops. Each line
+        // here is one such frame.
+        if (std::strcmp(decision, "CORRECT") == 0) {
+            const float ours = g_last_our_output.exchange(final_value, std::memory_order_relaxed);
+            if (ours != 0.0f && std::fabs(shader_now - ours) > kRenderedMiss &&
+                g_miss_lines.fetch_add(1, std::memory_order_relaxed) < kMaxMissLines) {
+                logger::info("MISS  w {:.4f}  slot {:<3} we wrote {:8.4f}, the picture shows"
+                             " {:8.4f}  (off by {:+.4f})  now correcting {:8.4f} -> {:8.4f}",
+                             weight, slot == kNoSlot ? -1 : static_cast<int>(slot), ours,
+                             shader_now, shader_now - ours, original, final_value);
+            }
+        }
+
         // Where is the cut, relative to the bar weight? See kCutThreshold.
-        if (is_rendered && slot != kNoSlot) {
+        // Only during cutscenes: the first run spent 136 of its 200 lines on
+        // gameplay cuts, which are not the question.
+        if (is_rendered && slot != kNoSlot && weight > 0.0f) {
             const float last_in =
                 g_dst_last_in[slot].exchange(original, std::memory_order_relaxed);
             if (last_in != 0.0f && std::fabs(original - last_in) > kCutThreshold &&
