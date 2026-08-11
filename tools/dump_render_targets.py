@@ -30,8 +30,12 @@ SCREEN = (3440, 1440)
 
 # Sizes worth shouting about: the framed window, the 16:9 box, and the usual
 # downsampled versions of both.
+# NOTE: 3440x1440 and its halves were originally in here too, which made the
+# script announce "a buffer the size of the framed window exists" for a perfectly
+# ordinary half-resolution post-processing buffer. Downscaled copies of the
+# screen are not suspicious; only the framed window is.
 SUSPECT = {}
-for w, h in ((2560, 1090), (2560, 1440), (3440, 1440)):
+for w, h in ((2560, 1090), (2560, 1440)):
     for div in (1, 2, 4, 8):
         SUSPECT[(w // div, h // div)] = "%dx%d / %d" % (w, h, div)
 
@@ -118,7 +122,7 @@ def collect(controller):
             note = "   <-- same shape as the framed window"
         lines.append("  %5d x %-5d   %3d target(s)%s" % (w, h, sizes[key], note))
 
-    hits = [k for k in sizes if k in SUSPECT and k != SCREEN]
+    hits = [k for k in sizes if k in SUSPECT]
     lines.append("")
     if hits:
         lines.append("A buffer the size of the framed window exists. That is the thing to chase.")
