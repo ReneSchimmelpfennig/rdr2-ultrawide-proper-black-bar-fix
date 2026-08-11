@@ -89,7 +89,31 @@ std::atomic<unsigned> g_dst_shader_samples[kMaxDestinations]{};
 // Enough samples to be sure, and a clear majority. The two real ones score ~99%,
 // everything else scores zero, so the threshold is not delicate.
 constexpr unsigned kMinSamples = 20;
-constexpr float kShaderMatch = 5e-3f;  // relative
+
+// How closely a destination's last value must track the shader constant to count
+// as the rendered camera.
+//
+// This was 5e-3 relative, which at 45 degrees is a window of +-0.22 degrees, and
+// that window is the whole transition judder. The full ramp trace makes it plain
+// -- these are consecutive frames of one fade-out:
+//
+//   CORRECT slot 25  in 51.2820  shader 44.6403  prev 44.6403   <- exact
+//   CORRECT slot 27  in 45.0000  shader 44.8434  prev 45.0000   <- off by 0.157
+//   CORRECT slot  6  in 51.2820  shader 51.2820  prev 51.2820   <- exact
+//
+// The camera that really is rendered matches *exactly*, because the shader
+// constant is literally the value we wrote into it one frame earlier. Slot 27 is
+// an idle state parked on 45.0000 that drifts into the tolerance whenever the
+// rendered field of view passes 45 -- which it does in the middle of every ramp.
+// It then wins the one correction this frame is allowed, and the real camera
+// goes uncorrected: two structures corrected in alternate frames, 5.5 degrees
+// apart.
+//
+// 1e-4 relative is 0.0045 degrees at that value: roomy against float rounding,
+// and still a factor of twenty-four clear of the nearest false positive
+// measured. If a true match ever does fall outside it, the sticky render slot
+// carries the correction across that frame, which is exactly what it is for.
+constexpr float kShaderMatch = 1e-4f;  // relative
 
 // The correction must be applied once per authored value, never to its own
 // output. The camera states feed each other, so a value corrected in one of
