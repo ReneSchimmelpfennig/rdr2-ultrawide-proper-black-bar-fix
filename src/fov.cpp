@@ -187,6 +187,22 @@ std::atomic<std::size_t> g_ramp_last_slot{static_cast<std::size_t>(-1)};
 // 0 = nothing logged yet, 1 = correcting, 2 = sliding.
 std::atomic<int> g_ramp_state{0};
 
+// Finding the camera cut.
+//
+// Both attempts at the transition were keyed on the letterbox weight, and both
+// were wrong in the same way: the bars are a mask, the game does not reframe
+// while they slide. It reframes at the cut, and there a change of focal length
+// is invisible because the whole picture changes anyway.
+//
+// So the cut is what the correction should hang on, and this finds it: the
+// authored input of the rendered camera sits at a constant 51.2820 through the
+// whole ramp, so the moment it jumps is the cut. Half a degree is well above
+// the drift of a moving camera and far below the several degrees a cut brings.
+constexpr float kCutThreshold = 0.5f;
+constexpr unsigned kMaxCutLines = 200;
+std::atomic<unsigned> g_cut_lines{0};
+std::atomic<float> g_dst_last_in[kMaxDestinations]{};
+
 constexpr std::uint32_t kTagMask = 0x000000FFu;
 constexpr std::uint32_t kTagValue = 0x000000A5u;
 
@@ -434,6 +450,19 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     const auto finish = [&](float final_value, const char* decision) {
         if (slot != kNoSlot) {
             g_dst_last_final[slot].store(final_value, std::memory_order_relaxed);
+        }
+
+        // Where is the cut, relative to the bar weight? See kCutThreshold.
+        if (is_rendered && slot != kNoSlot) {
+            const float last_in =
+                g_dst_last_in[slot].exchange(original, std::memory_order_relaxed);
+            if (last_in != 0.0f && std::fabs(original - last_in) > kCutThreshold &&
+                g_cut_lines.fetch_add(1, std::memory_order_relaxed) < kMaxCutLines) {
+                logger::info("CUT   w {:.4f}  slot {:<3} in {:8.4f} -> {:8.4f}  (delta {:+.4f})"
+                             "  shader {:8.4f}  decision {}",
+                             weight, slot == kNoSlot ? -1 : static_cast<int>(slot), last_in,
+                             original, original - last_in, shader_now, decision);
+            }
         }
         // Only the rendered camera is interesting, and there are two dozen
         // states per frame -- logging all of them filled the budget inside a
