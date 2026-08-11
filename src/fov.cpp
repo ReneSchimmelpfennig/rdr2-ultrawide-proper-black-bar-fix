@@ -265,9 +265,12 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     bool is_rendered = false;
     if (slot != kNoSlot) {
         const float shader = read_float(g_shader_fov_addr);
+        const auto tracks_shader = [&](float value) {
+            return value != 0.0f &&
+                   std::fabs(value - shader) <= std::fabs(shader) * kShaderMatch;
+        };
         const float previous = g_dst_last_final[slot].load(std::memory_order_relaxed);
-        const bool matches = previous != 0.0f &&
-                             std::fabs(previous - shader) <= std::fabs(shader) * kShaderMatch;
+        const bool matches = tracks_shader(previous);
 
         // Sticky, because the game cuts between cameras. At a cut the shader
         // constant jumps and for one frame nothing matches it -- measured as
@@ -284,10 +287,35 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // between corrected and untouched. A fix that silences the feature is
         // worse than the fault it was aimed at, so it goes back until the
         // decisions have actually been measured rather than guessed at.
-        if (matches) {
+        // Measured, finally, instead of reasoned about: the full ramp trace
+        // shows 117 of 120 frames arriving with the cutscene camera's 48.8400
+        // and exactly 3 arriving with 45.0000, each of those producing an output
+        // 3.5 degrees off for a single frame. That is the judder.
+        //
+        // 45.0000 is the value two dozen *unrendered* camera states sit at. The
+        // corrected output passes through 45 during the ramp, so the shader
+        // constant does too, and with a tolerance of 5e-3 relative -- 0.225
+        // degrees at that value -- every one of those idle states suddenly
+        // "matches". Worse, `if (matches) store(slot)` let one of them take the
+        // role away from the camera that really was being rendered.
+        //
+        // So a newcomer may only take over when the incumbent has actually lost
+        // the camera. That keeps the stickiness which the cut handling needs --
+        // an incumbent that matches nothing for a frame still holds the role --
+        // while a coincidental match can no longer steal it.
+        //
+        // This is not the earlier "only the remembered slot" attempt that
+        // silenced the correction entirely. That one never handed the role on;
+        // this hands it on the moment the incumbent stops tracking the shader.
+        const std::size_t incumbent = g_render_slot.load(std::memory_order_relaxed);
+        const bool incumbent_holds =
+            incumbent != static_cast<std::size_t>(-1) && incumbent < kMaxDestinations &&
+            tracks_shader(g_dst_last_final[incumbent].load(std::memory_order_relaxed));
+
+        if (matches && !incumbent_holds) {
             g_render_slot.store(slot, std::memory_order_relaxed);
         }
-        is_rendered = matches || g_render_slot.load(std::memory_order_relaxed) == slot;
+        is_rendered = g_render_slot.load(std::memory_order_relaxed) == slot;
 
         // Bookkeeping for the report only.
         g_dst_shader_samples[slot].fetch_add(1, std::memory_order_relaxed);
