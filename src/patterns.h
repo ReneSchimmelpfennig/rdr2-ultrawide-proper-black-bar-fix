@@ -201,6 +201,37 @@ inline constexpr std::string_view kUiAlignVariant =
 inline constexpr std::string_view kOverlayFit =
     "48 89 5C 24 08 57 48 83 EC 20 48 8B DA 48 8B F9 E8 ? ? ? ? 66 0F 6E";
 
+// void ClampFocalLength(CameraObject* cam)
+//
+// Runs after ApplyCameraState and rewrites the field of view in place:
+//
+//     focal = 24 / (2 * tan(fov * pi/360))     // fov degrees -> focal length
+//     focal = clamp(focal, camMin, camMax)     // the camera's lens limits
+//     fov   = atan(12 / focal) * 114.59155     // and back, 114.59155 = 2*180/pi
+//
+// All four constants read out of the image: 24, 12, 114.59155, and the ceilings
+// 130 and 9999. It is the very formula this project already documented as the
+// game's focal-length relation, found from the other end.
+//
+// This is what undoes the correction on some frames. Our 39.3141 degrees is a
+// focal length of 33.594 mm where the authored 51.2802 is 25.001 mm, so a
+// camera whose lens tops out at its authored value clamps straight back -- and
+// the field of view returns to 51.28 exactly, which is the alternation seen on
+// screen.
+//
+// Found with a read watchpoint on an address a correction had actually landed
+// in: two accesses per frame at +0x46A5AF and +0x46A684, both inside this
+// function.
+//
+// 24 bytes, the one call displacement wildcarded, one hit in the image.
+inline constexpr std::string_view kFocalClamp =
+    "40 53 48 83 EC 60 48 8B D9 48 8D 4C 24 20 E8 ? ? ? ? 48 8B 03 48 8D";
+
+// Byte offset of the field of view inside the object this one takes. Not the
+// same structure as kCameraStateFov -- the decompiler shows param_1[0x2a] on a
+// longlong pointer, and the watchpoint confirms [rbx+0x150].
+inline constexpr std::ptrdiff_t kFocalClampFov = 0x150;
+
 // A function prologue, also taken from RDR2NoBlackBars.asi. Purpose still
 // unconfirmed; resolves to exactly one address on this build.
 inline constexpr std::string_view kUnknownPrologue =

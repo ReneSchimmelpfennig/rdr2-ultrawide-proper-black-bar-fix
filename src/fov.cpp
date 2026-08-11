@@ -91,6 +91,15 @@ std::atomic<bool> g_reached_settled{false};
 // store itself.
 std::atomic<std::uintptr_t> g_last_corrected_addr{0};
 
+// The lens clamp, see patterns::kFocalClamp. It runs after us and rewrites the
+// field of view from a clamped focal length, which on some frames restores the
+// authored value exactly and undoes the correction.
+using ClampFn = void (*)(std::uintptr_t);
+ClampFn g_clamp_original = nullptr;
+void* g_clamp_target = nullptr;
+std::atomic<unsigned long long> g_clamp_reverts{0};
+std::atomic<int> g_clamp_logged{0};
+
 // TRIED AND REVERTED. Correcting every camera state in an established cutscene
 // compounds, exactly as the original design did, and the ring did not prevent
 // it.
@@ -1049,6 +1058,45 @@ Config read_config() {
     return config;
 }
 
+// The lens clamp may not undo the correction.
+//
+// It converts the field of view to a focal length, clamps that to the camera's
+// lens limits, and converts back -- a round trip that is the identity until the
+// clamp bites. Our correction moves the focal length from 25.0 mm to 33.6 mm, so
+// on a camera whose lens tops out at its authored value the clamp puts the field
+// of view back exactly where it was.
+//
+// Rather than fight the clamp or widen its limits, the value is simply restored
+// afterwards, and only in the one case that matters: the value going in was ours
+// and the clamp changed it. Everything else passes through untouched, so lens
+// limits keep working for every camera we are not correcting.
+void clamp_detour(std::uintptr_t camera) {
+    float before = 0.0f;
+    const bool readable = camera != 0;
+    if (readable) {
+        std::memcpy(&before, reinterpret_cast<const void*>(camera + patterns::kFocalClampFov),
+                    sizeof(before));
+    }
+
+    g_clamp_original(camera);
+
+    if (!readable || !is_our_own_output(before)) {
+        return;
+    }
+    float after = 0.0f;
+    std::memcpy(&after, reinterpret_cast<const void*>(camera + patterns::kFocalClampFov),
+                sizeof(after));
+    if (after == before) {
+        return;
+    }
+    std::memcpy(reinterpret_cast<void*>(camera + patterns::kFocalClampFov), &before,
+                sizeof(before));
+    g_clamp_reverts.fetch_add(1, std::memory_order_relaxed);
+    if (g_clamp_logged.fetch_add(1, std::memory_order_relaxed) < 12) {
+        logger::info("focal clamp wanted {:.4f} instead of our {:.4f} -- kept ours", after, before);
+    }
+}
+
 bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& module,
              std::uintptr_t anchor, const Config& config) {
     g_config = config;
@@ -1160,6 +1208,30 @@ bool install(const std::vector<mem::NamedRegion>& sections, const mem::Region& m
         MH_RemoveHook(g_target);
         g_target = nullptr;
         return false;
+    }
+
+    // The lens clamp. Optional: if the signature ever stops matching, the plugin
+    // works as it did before, only with the alternation back.
+    if (const auto clamp_pattern = mem::parse_pattern(patterns::kFocalClamp)) {
+        std::vector<std::uintptr_t> clamp_hits;
+        for (const auto& [name, region] : sections) {
+            mem::find_all(region, *clamp_pattern, clamp_hits);
+        }
+        if (clamp_hits.size() == 1) {
+            g_clamp_target = reinterpret_cast<void*>(clamp_hits.front());
+            if (MH_CreateHook(g_clamp_target, reinterpret_cast<void*>(&clamp_detour),
+                              reinterpret_cast<void**>(&g_clamp_original)) == MH_OK &&
+                MH_EnableHook(g_clamp_target) == MH_OK) {
+                logger::info("focal-length clamp hooked at module +0x{:X}",
+                             clamp_hits.front() - module.base);
+            } else {
+                logger::info("focal-length clamp: hooking failed -- carrying on without it");
+                g_clamp_target = nullptr;
+            }
+        } else {
+            logger::info("focal-length clamp matched {} time(s), need 1 -- not hooked",
+                         clamp_hits.size());
+        }
     }
 
     switch (g_config.mode) {
@@ -1285,6 +1357,8 @@ bool once_per_frame() { return g_once_per_frame.load(); }
 std::uintptr_t rendered_fov_address() {
     return g_last_corrected_addr.load(std::memory_order_relaxed);
 }
+
+unsigned long long focal_clamp_reverts() { return g_clamp_reverts.load(); }
 
 
 void report_destinations(std::uintptr_t module_base) {
