@@ -705,6 +705,9 @@ DWORD WINAPI worker(LPVOID) {
                 }
             }
 
+            // Cheap, and it settles the question about the intro's side bars.
+            bars::verify();
+
             if ((uibox::found() || overlay::found()) && is_readable(weight, sizeof(float))) {
                 const float w = read_float(weight);
                 if (!in_cutscene && w > 0.5f) {

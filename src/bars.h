@@ -22,6 +22,15 @@ bool set_hidden(bool hidden);
 
 [[nodiscard]] bool hidden();
 
+// Reads the patched byte back and logs it if it is no longer what we wrote.
+//
+// After the pre-rendered intro, the side bars stay visible for a few seconds in
+// the in-game cutscene before fading. Only one instruction in the whole game
+// writes that alpha byte -- the one we patch -- so either something restores our
+// patch for a while, or those bars come from a different drawing path
+// altogether. Watching the byte tells the two apart without guessing.
+void verify();
+
 // Restores the original byte. Called on unload.
 void restore();
 

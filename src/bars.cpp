@@ -64,6 +64,21 @@ bool set_hidden(bool hidden) {
 
 bool hidden() { return g_hidden; }
 
+void verify() {
+    if (g_immediate == 0) {
+        return;
+    }
+    static std::uint8_t last_reported = 0xEE;
+    const auto now = *reinterpret_cast<const volatile std::uint8_t*>(g_immediate);
+    const std::uint8_t expected = g_hidden ? 0x00 : g_original;
+    if (now == expected || now == last_reported) {
+        return;
+    }
+    last_reported = now;
+    logger::info("bars: the patched byte reads 0x{:02X}, expected 0x{:02X} -- something rewrote it",
+                 now, expected);
+}
+
 void restore() {
     if (g_immediate != 0 && g_hidden) {
         write_byte(g_immediate, g_original);
