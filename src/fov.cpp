@@ -87,10 +87,30 @@ constexpr float kSettledWeight = 0.999f;
 // returns to zero, i.e. when gameplay resumes.
 std::atomic<bool> g_reached_settled{false};
 
-// Correct every camera state once the cutscene is established. See the long note
-// at the is_rendered check. One constant to turn off if it misbehaves -- the
-// failure mode is unmistakable: the picture zooms far too far in.
-constexpr bool kCorrectAllWhenSettled = true;
+// TRIED AND REVERTED. Correcting every camera state in an established cutscene
+// compounds, exactly as the original design did, and the ring did not prevent
+// it.
+//
+// Measured on the shader constant, so on the picture rather than on our own
+// bookkeeping:
+//
+//   w 0.9999  ->  29.7821     correct: 39.3141 corrected once
+//   w 1.0000  ->  22.3802     2*atan(k*tan(29.78/2)) -- corrected twice
+//
+// 12.2887 appeared as well, a value that never occurs when only the rendered
+// camera is corrected. rschi saw it before the log did: "the picture is a bit
+// too close".
+//
+// Why the ring did not catch it: a corrected value reaching another state as
+// input does not arrive verbatim. It goes through the camera code, which is
+// arithmetic, and arithmetic destroys both the low mantissa bits carrying the
+// tag and any hope of exact equality. The ring can only catch verbatim copies --
+// which is precisely what the note above the tag says, and I built on it anyway.
+//
+// The one-frame gap after a cut therefore cannot be closed this way. Closing it
+// needs a signal that a cut has happened *before* the shader constant confirms
+// it, not a wider net.
+constexpr bool kCorrectAllWhenSettled = false;
 std::atomic<bool> g_force{false};
 std::atomic<bool> g_flatten{false};
 std::atomic<int> g_flatten_logged{0};
