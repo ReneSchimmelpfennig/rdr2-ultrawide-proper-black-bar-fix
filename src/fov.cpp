@@ -214,6 +214,7 @@ std::atomic<float> g_last_our_output{0.0f};
 constexpr unsigned kMaxScreenLines = 4000;
 std::atomic<unsigned> g_screen_lines{0};
 std::atomic<float> g_last_screen{0.0f};
+std::atomic<float> g_prev_weight{0.0f};
 
 constexpr std::uint32_t kTagMask = 0x000000FFu;
 constexpr std::uint32_t kTagValue = 0x000000A5u;
@@ -462,6 +463,22 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     const auto finish = [&](float final_value, const char* decision) {
         if (slot != kNoSlot) {
             g_dst_last_final[slot].store(final_value, std::memory_order_relaxed);
+        }
+
+        // Each cutscene gets a fresh budget.
+        //
+        // Reaching the scene that actually misbehaves takes several minutes of
+        // loading and riding, and every cutscene on the way would otherwise
+        // spend the budget before the interesting one starts. Resetting at each
+        // cutscene boundary means the last one in the log is always complete,
+        // whatever happened before it.
+        {
+            const float previous_weight = g_prev_weight.exchange(weight, std::memory_order_relaxed);
+            if (weight > 0.0f && previous_weight <= 0.0f) {
+                g_screen_lines.store(0, std::memory_order_relaxed);
+                g_last_screen.store(0.0f, std::memory_order_relaxed);
+                logger::info("--- cutscene begins, screen trace reset ---");
+            }
         }
 
         // What is actually on screen, frame by frame.
