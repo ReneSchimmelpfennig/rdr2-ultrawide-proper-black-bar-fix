@@ -64,8 +64,22 @@ inline constexpr double kMaxCorrectedAspect = 2.4;
 // The letterbox amount doubles as the blend weight: 0 = no bars (gameplay,
 // leave the FOV alone), 1 = fully letterboxed (apply the full correction).
 // Interpolating k rather than the resulting FOV keeps the transition smooth.
+// How fast the correction follows the bars.
+//
+// Tying it one-to-one to the letterbox amount is the obvious choice and it reads
+// badly on the cinematic camera: the bars ease in over about 1.3 s, so the
+// framing only arrives at the end, and since the player pressed the button
+// themselves it feels like lag rather than like a transition. In a cutscene the
+// same curve is pleasant, because nobody is waiting for it.
+//
+// Reaching full correction at 40% of the fade keeps the movement smooth -- it is
+// still an ease, just a shorter one -- while the framing settles early enough to
+// feel immediate. The remaining 60% of the fade then has a stable field of view,
+// which is also the part where the game cuts.
+inline constexpr double kCorrectionReachesFullAt = 0.4;
+
 [[nodiscard]] inline double blended_factor(double k, double letterbox_amount) {
-    const double t = std::clamp(letterbox_amount, 0.0, 1.0);
+    const double t = std::clamp(letterbox_amount / kCorrectionReachesFullAt, 0.0, 1.0);
     return 1.0 + (k - 1.0) * t;
 }
 
