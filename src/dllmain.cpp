@@ -17,6 +17,7 @@
 #include "hunt.h"
 #include "log.h"
 #include "mem.h"
+#include "overlay.h"
 #include "patterns.h"
 #include "safearea.h"
 #include "uibox.h"
@@ -333,6 +334,7 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F7   correction on / off");
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("  Ctrl+Alt+O   full-screen overlays: stretched / fitted to 16:9  [2D test]");
     logger::info("  Ctrl+Alt+U   16:9 boxing of the UI on / off  [2D test]");
     logger::info("  Ctrl+Alt+A   report the display as 16:9  [2D test -- also flattens the bars]");
     logger::info("  Ctrl+Alt+S   report the bar height as zero to the script layer  [2D test]");
@@ -355,6 +357,7 @@ void run_hotkeys(unsigned int duration_ms) {
     bool safe_key = false;    // Ctrl+Alt+S
     bool aspect_key = false;  // Ctrl+Alt+A
     bool uibox_key = false;   // Ctrl+Alt+U
+    bool overlay_key = false; // Ctrl+Alt+O
     bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
 
     const auto combo_pressed = [](int vk, bool& was_down) {
@@ -372,6 +375,11 @@ void run_hotkeys(unsigned int duration_ms) {
         if (combo_pressed('F', search_key)) {
             g_request_2d_search.store(true);
             logger::info("Ctrl+Alt+F: 2D geometry search requested");
+        }
+        if (combo_pressed('O', overlay_key)) {
+            logger::info("Ctrl+Alt+O pressed");
+            overlay::report(g_module_base);
+            overlay::set_stretched(!overlay::stretched());
         }
         if (combo_pressed('U', uibox_key)) {
             logger::info("Ctrl+Alt+U pressed");
@@ -538,6 +546,17 @@ DWORD WINAPI worker(LPVOID) {
             g_module_base = module.base;
             g_sections = mem::executable_sections(module);
 
+            // The overlay fit. Unlike everything before it, this one arrived
+            // with numbers: its two outputs are the constants RenderDoc found in
+            // the intro filter's uniforms. On from startup so a single cutscene
+            // answers it; Ctrl+Alt+O switches back for the comparison.
+            if (overlay::init(g_sections)) {
+                logger::info("");
+                logger::info("TEST BUILD: full-screen overlays are stretched to the whole screen.");
+                logger::info("  Ctrl+Alt+O returns them to the 16:9 fit.");
+                overlay::set_stretched(true);
+            }
+
             // On its own thread. It used to run here and block for an hour,
             // which meant everything below -- every diagnostic tool -- was
             // unreachable in the one mode people actually run. A marker file
@@ -625,26 +644,27 @@ DWORD WINAPI worker(LPVOID) {
             // cutscene edges are the moments worth reporting: the first run of
             // this reported "0 calls" from the main menu, which was true and
             // nearly worthless.
-            if (uibox::found()) {
-                if (is_readable(weight, sizeof(float))) {
-                    const float w = read_float(weight);
-                    if (!in_cutscene && w > 0.5f) {
-                        in_cutscene = true;
-                        logger::info("");
-                        logger::info("--- uibox: a cutscene just started ---");
-                        uibox::report(module.base);
-                    } else if (in_cutscene && w < 0.01f) {
-                        in_cutscene = false;
-                        logger::info("");
-                        logger::info("--- uibox: the cutscene just ended (the count that matters)"
-                                     " ---");
-                        uibox::report(module.base);
-                    }
-                }
-                if (GetTickCount() - last_periodic > 60 * 1000) {
-                    last_periodic = GetTickCount();
+            if ((uibox::found() || overlay::found()) && is_readable(weight, sizeof(float))) {
+                const float w = read_float(weight);
+                if (!in_cutscene && w > 0.5f) {
+                    in_cutscene = true;
+                    logger::info("");
+                    logger::info("--- a cutscene just started ---");
                     uibox::report(module.base);
+                    overlay::report(module.base);
+                } else if (in_cutscene && w < 0.01f) {
+                    in_cutscene = false;
+                    logger::info("");
+                    logger::info("--- the cutscene just ended (the counts that matter) ---");
+                    uibox::report(module.base);
+                    overlay::report(module.base);
                 }
+            }
+            if ((uibox::found() || overlay::found()) &&
+                GetTickCount() - last_periodic > 60 * 1000) {
+                last_periodic = GetTickCount();
+                uibox::report(module.base);
+                overlay::report(module.base);
             }
             Sleep(200);
         }
@@ -670,6 +690,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         }
     } else if (reason == DLL_PROCESS_DETACH) {
         fov::uninstall();
+        overlay::restore();
         uibox::restore();
         safearea::restore();
         bars::restore();

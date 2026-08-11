@@ -65,6 +65,8 @@ add_library(${PROJECT_NAME} SHARED
     src/log.h
     src/mem.cpp
     src/mem.h
+    src/overlay.cpp
+    src/overlay.h
     src/safearea.cpp
     src/safearea.h
     src/uibox.cpp

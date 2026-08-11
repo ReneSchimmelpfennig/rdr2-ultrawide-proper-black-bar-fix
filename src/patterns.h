@@ -175,6 +175,32 @@ inline constexpr std::string_view kUiBoxTransform =
 inline constexpr std::string_view kUiAlignVariant =
     "48 8B C4 48 89 58 08 48 89 68 10 48 89 70 18 57 48 83 EC 30 0F 29 78 E8 49 8B D9 49";
 
+// void FitTo16by9(float* size, float* pos)
+//
+//     s      = aspect * 9/16          // 1.34375 at 3440x1440, i.e. 1/k
+//     size.x = size.x * s
+//     pos.x  = pos.x * s + (1 - s) * 0.5
+//
+// This is the producer of the two constants the intro's full-screen filter
+// samples with. RenderDoc found them in its pixel-shader uniforms:
+//
+//     +0x50   1.343750     = 1/k
+//     +0x54   1.000000     (vertical, untouched -- hence no artefacts top or bottom)
+//     +0x58  -0.171875     = (1 - 1/k)/2
+//
+// Feed this function (1.0, 0.0) and it returns exactly those. The shader
+// therefore samples a 1920x1080 -- 16:9 -- texture with
+// `uv.x * 1.34375 - 0.171875`, which hits the texture's left edge at
+// x = 0.127907 and runs negative beyond it. Outside, the sampler repeats the
+// edge column, which is the horizontal smearing in the former bar area.
+//
+// Neutralised, the caller's values survive as 1.0 and 0.0 and the overlay is
+// stretched across the whole screen instead.
+//
+// 24 bytes with the call displacement wildcarded, one hit in the image.
+inline constexpr std::string_view kOverlayFit =
+    "48 89 5C 24 08 57 48 83 EC 20 48 8B DA 48 8B F9 E8 ? ? ? ? 66 0F 6E";
+
 // A function prologue, also taken from RDR2NoBlackBars.asi. Purpose still
 // unconfirmed; resolves to exactly one address on this build.
 inline constexpr std::string_view kUnknownPrologue =
