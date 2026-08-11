@@ -237,6 +237,8 @@ std::atomic<std::size_t> g_render_slot{static_cast<std::size_t>(-1)};
 std::atomic<unsigned long long> g_dst_clock{0};
 std::atomic<unsigned long long> g_dst_used[kMaxDestinations]{};
 std::atomic<unsigned long long> g_dst_evictions{0};
+constexpr unsigned long long kMaxEvictionLines = 60;
+std::atomic<unsigned long long> g_evictions_logged{0};
 
 bool is_stack_address(std::uintptr_t addr) {
     ULONG_PTR low = 0;
@@ -270,6 +272,25 @@ std::size_t record_destination(std::uintptr_t dst) {
             }
         }
         g_dst_evictions.fetch_add(1, std::memory_order_relaxed);
+
+        // Log it, because this is the leading suspect for the frames where no
+        // correction happens at all.
+        //
+        // Measured: every missed frame sits on slot 25, whose addresses are in
+        // the thread stack range, and the frame time at those points is a normal
+        // 15 ms -- so the game did not hitch, we simply did not correct. An
+        // eviction would explain it exactly: the history is cleared below, the
+        // rendered-camera test needs a non-zero history, and so the frame goes
+        // uncorrected and the next step is twice the size. The two ramps with no
+        // outliers at all used slots 41 and 24 and never touched 25.
+        //
+        // That is a good story and it is still only a story until this line
+        // shows up next to a missed frame.
+        if (g_evictions_logged.fetch_add(1, std::memory_order_relaxed) < kMaxEvictionLines) {
+            logger::info("EVICT slot {:<3} was 0x{:012X} (stack {})  now 0x{:012X} (stack {})",
+                         slot, g_dst[slot], is_stack_address(g_dst[slot]) ? "yes" : "no ", dst,
+                         is_stack_address(dst) ? "yes" : "no ");
+        }
         // A reused slot must not inherit the previous occupant's history, or the
         // rendered-camera test compares against a value from a different camera.
         g_dst_shader_hits[slot].store(0, std::memory_order_relaxed);
