@@ -118,6 +118,7 @@ ClampFn g_clamp_original = nullptr;
 void* g_clamp_target = nullptr;
 std::atomic<unsigned long long> g_clamp_reverts{0};
 std::atomic<int> g_clamp_logged{0};
+std::atomic<unsigned> g_clamp_census{0};
 
 // TRIED AND REVERTED. Correcting every camera state in an established cutscene
 // compounds, exactly as the original design did, and the ring did not prevent
@@ -1095,6 +1096,26 @@ void clamp_detour(std::uintptr_t camera) {
     if (readable) {
         std::memcpy(&before, reinterpret_cast<const void*>(camera + patterns::kFocalClampFov),
                     sizeof(before));
+    }
+
+    // Which cameras pass through the clamp, and how many per frame?
+    //
+    // The remaining artefact is one frame long and sits exactly on a camera cut:
+    // at w = 0.4753 the screen showed the cinematic camera's authored 49.5504,
+    // one frame later our 37.8991. On the cut frame the shader constant still
+    // carries the old camera, so the new one is not recognised yet.
+    //
+    // This clamp runs after ApplyCameraState, on the camera being finalised. If
+    // it sees exactly one camera per frame, it is a better signal than the
+    // shader constant -- available a frame earlier and unambiguous -- and the
+    // correction belongs here instead. If it sees several, it is no better and
+    // the idea dies cheaply.
+    if (readable && g_weight_addr != 0) {
+        float w = 0.0f;
+        std::memcpy(&w, reinterpret_cast<const void*>(g_weight_addr), sizeof(w));
+        if (w > 0.0f && g_clamp_census.fetch_add(1, std::memory_order_relaxed) < 400) {
+            logger::info("CLAMP w {:.4f}  cam 0x{:012X}  fov {:8.4f}", w, camera, before);
+        }
     }
 
     g_clamp_original(camera);
