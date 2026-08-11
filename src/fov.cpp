@@ -198,6 +198,10 @@ bool is_our_own_output(float value) { return carries_tag(value); }
 // copy and the tag is enough, which the logs confirm.
 std::atomic<float> g_corrected_at_weight{-1.0f};
 
+// Default on: that is the behaviour that has been running. See the comment at
+// the guard itself for why it is in question.
+std::atomic<bool> g_once_per_frame{true};
+
 // Which structure was last seen carrying the value that got rendered.
 std::atomic<std::size_t> g_render_slot{static_cast<std::size_t>(-1)};
 
@@ -425,8 +429,28 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     }
 
     // Already corrected in this frame -- see g_corrected_at_weight.
+    // Toggleable, because the ramp trace suggests this rule is what is left of
+    // the transition judder and I am not willing to guess at it again.
+    //
+    // The evidence: during a fade-out the rendered camera's structure is called
+    // *twice* per frame. First with the authored 51.2820, which we correct to
+    // about 40. Then again with the game's own blend value -- 51.2419, 51.2114,
+    // 51.1766 -- which this rule waves through, overwriting our correction. The
+    // shader constant proves it goes on to be rendered: it reads 51.2x while we
+    // are writing 40.x.
+    //
+    // Whether the correction survives a frame therefore depends on whether the
+    // game happens to write again after us, which varies frame to frame. That is
+    // a judder by construction.
+    //
+    // Turning the rule off corrects every authored value arriving at the
+    // rendered camera, including the late one. The risk is the compounding this
+    // rule was built to stop -- but the tag already catches our own output, and
+    // the second write measurably is not our output. Ctrl+Alt+1 switches it, so
+    // the question gets answered in one cutscene rather than in another build.
     const bool ramping = weight > 0.0f && weight < 0.999f;
-    if (ramping && weight == g_corrected_at_weight.load(std::memory_order_relaxed)) {
+    if (g_once_per_frame.load(std::memory_order_relaxed) && ramping &&
+        weight == g_corrected_at_weight.load(std::memory_order_relaxed)) {
         finish(original, "skip-fra");
         return;
     }
@@ -829,6 +853,10 @@ void set_flatten_bars(bool on) {
 }
 
 bool flattening_bars() { return g_flatten.load(); }
+
+void set_once_per_frame(bool on) { g_once_per_frame.store(on); }
+
+bool once_per_frame() { return g_once_per_frame.load(); }
 
 
 void report_destinations(std::uintptr_t module_base) {

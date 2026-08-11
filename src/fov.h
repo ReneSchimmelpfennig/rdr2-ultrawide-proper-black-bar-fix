@@ -97,6 +97,13 @@ void set_force(bool on);
 void set_flatten_bars(bool on);
 [[nodiscard]] bool flattening_bars();
 
+// The "one correction per frame during a ramp" rule. On is the behaviour that
+// has been shipping; the ramp trace suggests it is what lets the game overwrite
+// the correction late in a frame. Toggleable so the two can be compared in one
+// cutscene instead of one build per guess.
+void set_once_per_frame(bool on);
+[[nodiscard]] bool once_per_frame();
+
 // Logs every camera-state destination the detour has seen, with hit counts and
 // whether it is the master. Call after a run to find out which structures exist
 // -- only one of them can be the one the projection reads.

@@ -334,6 +334,7 @@ void run_hotkeys(unsigned int duration_ms) {
     logger::info("  F7   correction on / off");
     logger::info("  F8   letterbox bars on / off");
     logger::info("  F9   strength -0.05      F10  strength +0.05");
+    logger::info("  Ctrl+Alt+1   one correction per frame on / off  [transition test]");
     logger::info("  Ctrl+Alt+O   full-screen overlays: stretched / fitted to 16:9  [2D test]");
     logger::info("  Ctrl+Alt+U   16:9 boxing of the UI on / off  [2D test]");
     logger::info("  Ctrl+Alt+A   report the display as 16:9  [2D test -- also flattens the bars]");
@@ -358,6 +359,7 @@ void run_hotkeys(unsigned int duration_ms) {
     bool aspect_key = false;  // Ctrl+Alt+A
     bool uibox_key = false;   // Ctrl+Alt+U
     bool overlay_key = false; // Ctrl+Alt+O
+    bool once_key = false;    // Ctrl+Alt+1
     bool f7 = false, f8 = false, f9 = false, f10 = false, f11 = false, f12 = false;
 
     const auto combo_pressed = [](int vk, bool& was_down) {
@@ -375,6 +377,12 @@ void run_hotkeys(unsigned int duration_ms) {
         if (combo_pressed('F', search_key)) {
             g_request_2d_search.store(true);
             logger::info("Ctrl+Alt+F: 2D geometry search requested");
+        }
+        if (combo_pressed('1', once_key)) {
+            fov::set_once_per_frame(!fov::once_per_frame());
+            logger::info("Ctrl+Alt+1: one correction per frame {}",
+                         fov::once_per_frame() ? "ON (shipping behaviour)" : "OFF (correct every "
+                                                                            "authored value)");
         }
         if (combo_pressed('O', overlay_key)) {
             logger::info("Ctrl+Alt+O pressed");
