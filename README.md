@@ -30,9 +30,8 @@ vFOV_new = 2 * atan(k * tan(vFOV_old / 2))  // note: k scales the tangent
 ```
 
 At 3440x1440, `k` works out to exactly `2560/3440` — the pillarbox ratio the
-game itself computes. The correction eases in with the game's own letterbox
-animation and is complete at 40% of it, so the framing settles early instead of
-arriving at the end of the fade.
+game itself computes. The correction is blended in and out with the game's own
+letterbox animation, so the transition follows the bars rather than snapping.
 
 ## Status
 
