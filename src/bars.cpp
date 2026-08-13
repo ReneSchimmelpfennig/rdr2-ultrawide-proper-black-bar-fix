@@ -94,6 +94,9 @@ void* g_draw_target = nullptr;
 std::uintptr_t g_anchor = 0;
 std::atomic<bool> g_side_bars{false};
 std::atomic<int> g_side_logged{0};
+std::atomic<int> g_after_logged{0};
+std::atomic<int> g_calls_this_frame{0};
+float g_last_weight_seen = -1.0f;
 
 float read_float_at(std::uintptr_t address) {
     float value = 0.0f;
@@ -152,25 +155,52 @@ void draw_detour() {
             // barDisplay, and anything that does not change is drawn by neither
             // -- which would mean a second drawing path, the same suspicion the
             // intro's bars raised yesterday.
-            constexpr bool kProbeTheFields = true;
-            if (kProbeTheFields) {
-                write_float_at(bar235, 0.30f);
-                write_float_at(bar_display, 0.05f);
-            } else {
-                // Vertical bars off: the picture is already 2.35:1 and fills the
-                // height. The horizontal ones carry the whole difference.
-                write_float_at(bar235, 0.0f);
-                write_float_at(bar_display, ours);
-            }
+            // The probe answered: 0.30 drew fat top and bottom bars, 0.05 thin
+            // side ones. So bar235 is top/bottom, barDisplay is left/right, both
+            // writes take effect, and the mapping was right all along.
+            //
+            // Which makes the original result contradictory: if 0.30 draws, then
+            // 0 must draw nothing, and yet the bars stayed. The only account
+            // that fits both is that the value gets replaced again between our
+            // write and the drawing -- so the write is read back afterwards
+            // instead of assumed.
+            write_float_at(bar235, 0.0f);
+            write_float_at(bar_display, ours);
 
-            if (g_side_logged.fetch_add(1, std::memory_order_relaxed) < 8) {
-                logger::info("side bars: aspect {:.4f} weight {:.4f}   top/bottom {:.6f} -> 0"
-                             "   sides {:.6f} -> {:.6f}",
-                             aspect, weight, was235, wasDisplay, ours);
+            // How many times is the drawing called per frame? The weight is
+            // recomputed once a frame, so an identical weight means the same
+            // frame. Two calls would mean our write can be undone between them.
+            const int nth = (weight == g_last_weight_seen)
+                                ? g_calls_this_frame.fetch_add(1, std::memory_order_relaxed) + 1
+                                : (g_calls_this_frame.store(1, std::memory_order_relaxed), 1);
+            g_last_weight_seen = weight;
+
+            if (g_side_logged.fetch_add(1, std::memory_order_relaxed) < 12) {
+                logger::info("side bars: call {} in this frame, weight {:.4f}   top/bottom"
+                             " {:.6f} -> 0   sides {:.6f} -> {:.6f}",
+                             nth, weight, was235, wasDisplay, ours);
             }
         }
     }
     g_draw_original();
+
+    // Did what we wrote survive the drawing?
+    //
+    // Reading it back afterwards separates the two remaining possibilities
+    // without another guess: unchanged means the drawing used our values and the
+    // bars come from somewhere else entirely; changed means something restored
+    // the game's values in between, and the number it reads tells us what.
+    if (g_side_bars.load(std::memory_order_relaxed) && g_anchor != 0 &&
+        g_after_logged.load(std::memory_order_relaxed) < 8) {
+        const float now235 = read_float_at(g_anchor + patterns::kDrawnBar235);
+        const float nowDisplay = read_float_at(g_anchor + patterns::kDrawnBarDisplay);
+        if (now235 != 0.0f) {
+            g_after_logged.fetch_add(1, std::memory_order_relaxed);
+            logger::info("side bars: after drawing, top/bottom reads {:.6f} -- we wrote 0"
+                         "   (sides {:.6f})",
+                         now235, nowDisplay);
+        }
+    }
 }
 
 }  // namespace
