@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 
+#include "fov.h"
 #include "framing.h"
 #include "log.h"
 #include "patterns.h"
@@ -116,25 +117,36 @@ void draw_detour() {
         const std::uintptr_t bar_display = g_anchor + patterns::kDrawnBarDisplay;
 
         const float weight = read_float_at(weight_addr);
-        if (weight > 0.0f) {
-            // The game's own display bar is (1 - (16/9)/aspect)/2 * weight, so
-            // the aspect it computed comes straight back out of it -- no second
-            // measurement, and correct in windowed mode.
-            const float theirs = read_float_at(bar_display);
-            const double k = framing::correction_factor_from_bars(theirs, weight);
-            const double aspect = framing::aspect_from_correction(k);
+        const double aspect = fov::display_aspect();
 
+        // The aspect must not come from the bar value we are about to
+        // overwrite.
+        //
+        // The first version did exactly that: read the game's bar, invert it to
+        // get the aspect, then replace the bar. Whenever the value read back was
+        // one of ours rather than the game's -- a second call in the same frame
+        // is enough -- the next bar was computed from the previous one, and the
+        // edge crept a little further every frame. On screen that is a bar with
+        // a frayed edge, which is precisely what came back from the first test.
+        //
+        // fov::display_aspect() is measured once, before any of our writes, from
+        // the same k the correction uses.
+        if (weight > 0.0f && aspect > framing::kUltrawideThreshold) {
             const double side = (1.0 - framing::kContentAspect / aspect) * 0.5;
             const float ours = static_cast<float>(side * weight);
 
-            // Vertical bars off: at this point the picture is already 2.35:1 and
-            // fills the height. Horizontal bars carry the difference.
+            const float was235 = read_float_at(bar235);
+            const float wasDisplay = read_float_at(bar_display);
+
+            // Vertical bars off: the picture is already 2.35:1 and fills the
+            // height. The horizontal ones carry the whole difference.
             write_float_at(bar235, 0.0f);
             write_float_at(bar_display, ours);
 
-            if (g_side_logged.fetch_add(1, std::memory_order_relaxed) < 3) {
-                logger::info("side bars: aspect {:.4f}, bar {:.6f} -> {:.6f} (weight {:.4f})",
-                             aspect, theirs, ours, weight);
+            if (g_side_logged.fetch_add(1, std::memory_order_relaxed) < 8) {
+                logger::info("side bars: aspect {:.4f} weight {:.4f}   top/bottom {:.6f} -> 0"
+                             "   sides {:.6f} -> {:.6f}",
+                             aspect, weight, was235, wasDisplay, ours);
             }
         }
     }
