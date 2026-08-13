@@ -18,12 +18,14 @@
 
     <!-- The whole 32:9 screen, and the 2.35:1 composition inside it. The
          composition keeps the full height either way: 108 * 2.35 = 253.8, which
-         leaves 65.1 at each side -- the 0.169531 the game's own bar maths
-         produces at 5120x1440. -->
+         leaves 65.1 at each side, the 0.169531 the game's own bar maths
+         produces at 5120x1440. (No double dashes in here: XML comments cannot
+         contain them, and that is what made GitHub refuse to render this file.)
+    -->
     <clipPath id="clipScreen32"><rect x="0" y="0" width="384" height="108"/></clipPath>
     <clipPath id="clipFrame32"><rect x="65.1" y="0" width="253.8" height="108"/></clipPath>
     <!-- As shipped: a 16:9 window pillarboxed into the screen, then cropped to
-         2.35 -- 192 wide, 81.7 high, bars on all four sides. -->
+         2.35: 192 wide, 81.7 high, bars on all four sides. -->
     <clipPath id="clipShipped32"><rect x="96" y="13.15" width="192" height="81.7"/></clipPath>
 
     <!-- One scene, drawn once, centred on (0,0). The composition is the middle
