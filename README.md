@@ -43,14 +43,48 @@ letterbox animation, so the transition follows the bars rather than snapping.
 | Full-screen overlays and the intro video | fixed — they cover the whole screen, no smearing |
 | Cinematic camera | corrected, including the cut into the shot |
 | Displays wider than 21:9 (32:9) | framed at the film frame, configurable — see below |
-| **Credit inserts and subtitles** | **not fixed yet — see below** |
 | Rare single-frame flash | see below |
+
+### Known issue: a rare single-frame flash
+
+Very occasionally one frame is rendered without the correction and the picture
+flashes. The cause is measured rather than suspected: the plugin recognises its
+own output by value, and two different cameras can hold values that close by
+coincidence. In one log our corrected 39.3139 sat 5e-6 away from another
+camera's authored 39.3141 — inside the tolerance, so the authored value was
+mistaken for ours and left alone.
+
+Tightening the tolerance is not the answer; the rounding it has to catch is only
+a factor of two away. The clean fix is to ask "did we write this value into
+*this* camera", which is a larger change.
+
+The plugin notices it after the fact and repairs it on the next frame, and it
+logs each one, so the rate is known rather than estimated: three in a session of
+roughly half an hour with several cutscenes.
+
+### Fixed: the artefacts in the former bar area
+
+The intro's photographic filter and the intro video sample a 1920x1080 texture —
+16:9 — and the game maps it into the 16:9 part of an ultrawide screen. Beyond
+that, the sampler has nothing valid left and repeats the edge column, which is
+the horizontal smearing that appears once the bars are gone.
+
+The plugin intercepts that mapping and scales the asset up until it covers the
+width, keeping its proportions and cropping 25% of the height — the same trade
+the field-of-view correction makes.
+
+Credit inserts and subtitles keep the position and size the game gives them,
+which in practice sits where it always did — cutscene and gameplay subtitles land
+in the same place either way. What was investigated there, and the several
+approaches that turned out to be dead ends, is in
+[`docs/how-it-works.md`](docs/how-it-works.md) for anyone who wants to take it
+further.
 
 ## Displays wider than 21:9
 
 21:9 is almost exactly the 2.35:1 frame cutscenes are composed for, so the
-corrected picture fills the screen and there is nothing to decide. 32:9 is
-wider than the composition itself, and then there is.
+corrected picture fills the screen and there is nothing to decide. 32:9 is wider
+than the composition itself, and then there is.
 
 The correction stops at the film frame either way — the picture keeps the full
 height of the intended composition. What differs is the 51% of extra width that
@@ -69,52 +103,6 @@ make, offered here as a choice rather than as the only option.
 The file is `RDR2UltrawideCutsceneFix.ini`, next to the plugin, and it is
 optional: without it the default applies. On 21:9 and narrower nothing in it is
 consulted at all, so it cannot change what those displays already get.
-
-### Known issue: a rare single-frame flash
-
-Very occasionally one frame is rendered without the correction and the picture
-flashes. The cause is measured rather than suspected: the plugin recognises its
-own output by value, and two different cameras can hold values that close by
-coincidence. In one log our corrected 39.3139 sat 5e-6 away from another
-camera's authored 39.3141 — inside the tolerance, so the authored value was
-mistaken for ours and left alone.
-
-Tightening the tolerance is not the answer; the rounding it has to catch is only
-a factor of two away. The clean fix is to ask "did we write this value into
-*this* camera", which is a larger change.
-
-### Fixed: the artefacts in the former bar area
-
-The intro's photographic filter and the intro video sample a 1920x1080 texture —
-16:9 — and the game maps it into the 16:9 part of an ultrawide screen. Beyond
-that, the sampler has nothing valid left and repeats the edge column, which is
-the horizontal smearing that appears once the bars are gone.
-
-The plugin intercepts that mapping and scales the asset up until it covers the
-width, keeping its proportions and cropping 25% of the height — the same trade
-the field-of-view correction makes.
-
-### Known issue: credit inserts and subtitles
-
-Credit inserts and subtitles are still laid out for the old 2560x1090 window and
-appear too small. They have nothing to do with the artefacts above — that turned
-out to be two separate problems wearing one description.
-
-What is settled so far, each of it measured rather than assumed:
-
-- the 2D layer lays out in a **16:9 box** (2560x1440 here), which cutscenes then
-  crop to 2.35:1. `1440 x 16/9 = 2560` exactly, so there is no cutscene-specific
-  rectangle to find
-- it does **not** take that box from the game's computed bar heights: those have
-  no consumer anywhere except drawing the bars, traced through xrefs
-- nor from the script native that exposes the bar height, patched to zero and
-  tested through a full cutscene
-- nor from the aspect ratio getter, patched to report 16:9 from startup
-- nor from the `SET_SCRIPT_GFX_ALIGN` family: both functions were hooked and
-  counted through a whole cutscene and never executed once
-
-[`docs/next-session.md`](docs/next-session.md) has the full list with the
-evidence and the plan. Contributions welcome.
 
 ## Requirements
 
