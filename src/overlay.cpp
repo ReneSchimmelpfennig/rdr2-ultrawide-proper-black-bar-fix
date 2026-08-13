@@ -101,15 +101,27 @@ void __fastcall detour(float* size, float* pos) {
             //
             // The picture itself is framed at 2.35 by then, so the overlay has
             // to be framed the same way or the two disagree.
+            // Note the direction: in this mapping a *larger* size makes the
+            // asset appear *smaller*, because it scales the texture coordinate
+            // rather than the picture. The game's own value proves it -- it uses
+            // size.x = aspect * 9/16, which is 2.0 on 32:9, to squeeze the asset
+            // into the 16:9 window.
+            //
+            // The 2.35 window therefore wants aspect / 2.35 = 1.513, not its
+            // reciprocal. I wrote the reciprocal first and the overlay came back
+            // stretched across the width, which is exactly what that mistake
+            // looks like.
             const double aspect = fov::display_aspect();
             if (aspect > framing::kUltrawideThreshold && size != nullptr && pos != nullptr) {
-                const double window = framing::kContentAspect / aspect;  // width of the frame
-                const double vertical = framing::kReferenceAspect / framing::kContentAspect;
+                const double horizontal = aspect / framing::kContentAspect;
+                // Cover the frame: match its width and let the height overflow,
+                // 16:9 into 2.35 being 1.32 times too tall.
+                const double vertical = framing::kContentAspect / framing::kReferenceAspect;
 
-                size[0] = static_cast<float>(size[0] * window);
-                pos[0] = static_cast<float>(pos[0] * window + (1.0 - window) * 0.5);
-                size[1] = static_cast<float>(size[1] * vertical);
-                pos[1] = static_cast<float>(pos[1] * vertical + (1.0 - vertical) * 0.5);
+                size[0] = static_cast<float>(size[0] * horizontal);
+                pos[0] = static_cast<float>(pos[0] * horizontal + (1.0 - horizontal) * 0.5);
+                size[1] = static_cast<float>(size[1] / vertical);
+                pos[1] = static_cast<float>(pos[1] / vertical + (1.0 - 1.0 / vertical) * 0.5);
                 break;
             }
             // Full width as above, then the vertical axis scaled by k and
