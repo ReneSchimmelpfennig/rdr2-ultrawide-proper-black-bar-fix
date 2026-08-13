@@ -232,6 +232,25 @@ inline constexpr std::string_view kFocalClamp =
 // longlong pointer, and the watchpoint confirms [rbx+0x150].
 inline constexpr std::ptrdiff_t kFocalClampFov = 0x150;
 
+// void DrawLetterbox()
+//
+// The only consumer of the two bar heights. It calls a rectangle drawer four
+// times -- twice with (0 .. bar) and twice with (1-bar .. 1) -- reading from the
+// *second* copy of the letterbox struct, the one the double buffering produces.
+//
+// Hooked so the bar heights can be replaced immediately before they are used,
+// which is the only moment at which nothing else can overwrite them.
+//
+// 24 bytes with the one RIP displacement wildcarded, one hit in the image.
+inline constexpr std::string_view kDrawLetterbox =
+    "48 8B C4 48 89 58 10 48 89 70 18 57 48 83 EC 50 80 3D ? ? ? ? 00 0F";
+
+// The bar heights the drawing reads live in the second copy of the struct, one
+// stride on from the anchor.
+inline constexpr std::ptrdiff_t kDrawnBar235 = letterbox::kStride + letterbox::kBarFraction235;
+inline constexpr std::ptrdiff_t kDrawnBarDisplay =
+    letterbox::kStride + letterbox::kBarFractionDisplay;
+
 // A function prologue, also taken from RDR2NoBlackBars.asi. Purpose still
 // unconfirmed; resolves to exactly one address on this build.
 inline constexpr std::string_view kUnknownPrologue =

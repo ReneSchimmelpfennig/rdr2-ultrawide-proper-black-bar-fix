@@ -427,6 +427,9 @@ bool is_our_own_output(float value) { return matches_something_we_wrote(value); 
 // there is no second measurement to disagree with the first.
 std::atomic<bool> g_aspect_reported{false};
 std::atomic<bool> g_clamp_reported{false};
+std::atomic<double> g_display_aspect{0.0};
+
+void report_aspect_once(double k);
 
 // One place where k is decided, used by both correction sites.
 //
@@ -442,6 +445,10 @@ double effective_k(float weight, std::uintptr_t bar_addr) {
         k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
                                        GetSystemMetrics(SM_CYSCREEN));
     }
+
+    // Before the clamp, or the reported aspect would be the film frame rather
+    // than the display.
+    report_aspect_once(k);
 
     // Wider than 21:9: stop the correction at the film frame. Narrower displays
     // never enter this, so their behaviour is bit-for-bit what it was.
@@ -464,6 +471,7 @@ void report_aspect_once(double k) {
         return;
     }
     const double aspect = framing::aspect_from_correction(k);
+    g_display_aspect.store(aspect, std::memory_order_relaxed);
     const bool ultrawide = aspect > framing::kUltrawideThreshold;
     logger::info("");
     logger::info("display aspect {:.4f} (k = {:.6f})", aspect, k);
@@ -991,7 +999,6 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             // the true backbuffer aspect, so this is correct in windowed mode
             // and at non-native resolutions without asking Windows.
             const double k = effective_k(weight, g_bar_addr);
-            report_aspect_once(k);
             // Strength scales how far k moves away from 1, still in tangent
             // space, so the blend with the letterbox weight stays intact.
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
@@ -1515,6 +1522,8 @@ std::uintptr_t rendered_fov_address() {
 }
 
 unsigned long long focal_clamp_reverts() { return g_clamp_reverts.load(); }
+
+double display_aspect() { return g_display_aspect.load(std::memory_order_relaxed); }
 
 
 void report_destinations(std::uintptr_t module_base) {

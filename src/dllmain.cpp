@@ -533,6 +533,11 @@ DWORD WINAPI worker(LPVOID) {
             bars::init(g_anchor_store);
             bars::set_hidden(true);  // the framing cannot be judged with them on
 
+            // Prepared, not switched on: the display aspect is not known until
+            // the first correction has read the game's bar height, so the
+            // decision is made in the loop below.
+            bars::init_side_bars(mem::executable_sections(module), anchor);
+
             // Prepared but not applied: measured to have no effect on the 2D
             // layer (see docs/how-it-works.md). The site stays reachable by
             // Ctrl+Alt+S so the measurement can be repeated cheaply, but it is
@@ -697,6 +702,7 @@ DWORD WINAPI worker(LPVOID) {
         // small change or the rewrite that was rejected at the start of the
         // project, and this answers it before anything is rewritten.
         bool probed_readers = false;
+        bool wide_display_applied = false;
 
         while (data) {
             if (g_request_2d_search.exchange(false)) {
@@ -726,6 +732,24 @@ DWORD WINAPI worker(LPVOID) {
 
             // Cheap, and it settles the question about the intro's side bars.
             bars::verify();
+
+            // Once, as soon as the aspect is known. On 21:9 the condition is
+            // false and nothing here ever runs.
+            if (!wide_display_applied) {
+                const double aspect = fov::display_aspect();
+                if (aspect > 0.0) {
+                    wide_display_applied = true;
+                    if (aspect > framing::kUltrawideThreshold &&
+                        !config::current().expand_cutscenes_sideways) {
+                        logger::info("");
+                        logger::info("wider than 21:9 and ExpandCutscenesSideways = false:");
+                        logger::info("  framing the picture with side bars instead of extending"
+                                     " it");
+                        bars::set_hidden(false);
+                        bars::set_side_bars(true);
+                    }
+                }
+            }
 
             if ((uibox::found() || overlay::found()) && is_readable(weight, sizeof(float))) {
                 const float w = read_float(weight);

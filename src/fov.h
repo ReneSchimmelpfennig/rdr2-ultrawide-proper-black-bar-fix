@@ -114,6 +114,13 @@ void set_once_per_frame(bool on);
 // If it reads from five, that is worth knowing before rewriting anything.
 [[nodiscard]] std::uintptr_t rendered_fov_address();
 
+// The display aspect, or 0 until the first correction has run.
+//
+// Derived from the game's own bar height rather than from Windows, so it is
+// right in windowed mode -- which is the only way a 21:9 machine can test the
+// behaviour for wider displays at all.
+[[nodiscard]] double display_aspect();
+
 // Logs every camera-state destination the detour has seen, with hit counts and
 // whether it is the master. Call after a run to find out which structures exist
 // -- only one of them can be the one the projection reads.

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
+
+#include "mem.h"
 
 // Removes the cutscene letterbox by patching the instruction that enables it.
 //
@@ -16,6 +19,28 @@ namespace bars {
 // `anchor_store` is the address of the C6 05 ... FF instruction itself, not of
 // the byte it writes.
 bool init(std::uintptr_t anchor_store);
+
+// Side bars for displays wider than the film frame.
+//
+// On anything wider than 2.35:1 the corrected picture keeps its full height and
+// no longer fills the width -- see framing::clamped_for_wide_display. This puts
+// the difference back under black, so the composition is framed rather than
+// extended.
+//
+// It works by hooking the drawing itself and replacing the two bar heights just
+// before they are read: the vertical ones go to zero, the horizontal ones become
+// (1 - 2.35/aspect)/2, scaled by the letterbox weight so the bars still animate
+// with the game's own easing. Everything else about the bars stays the game's.
+//
+// `anchor` is the address of the constant 0xFF byte. Returns false if the
+// drawing function could not be found, in which case the caller should keep
+// hiding the bars as before.
+bool init_side_bars(const std::vector<mem::NamedRegion>& sections, std::uintptr_t anchor);
+
+// Turns the side bars on. Until this is called the hook only passes through.
+void set_side_bars(bool on);
+
+[[nodiscard]] bool side_bars();
 
 // Turns the bars off (patched) or back on (original). Safe to call repeatedly.
 bool set_hidden(bool hidden);
