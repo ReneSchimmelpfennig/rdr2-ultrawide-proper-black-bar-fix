@@ -105,6 +105,7 @@ float read_float_at(std::uintptr_t address) {
 }
 
 void log_second_letterbox();
+void set_target_aspect_impl(bool to_sixteen_nine);
 
 void write_float_at(std::uintptr_t address, float value) {
     std::memcpy(reinterpret_cast<void*>(address), &value, sizeof(value));
@@ -116,6 +117,16 @@ void write_float_at(std::uintptr_t address, float value) {
 // frame and copies them into this second buffer, so the only moment at which the
 // values are both final and still ours is the entry to the drawing itself.
 void draw_detour() {
+    // Re-assert the target every frame, not every 200 ms.
+    //
+    // A camera cut evidently reloads it -- each shot brings its own value -- and
+    // with the worker loop as the only writer the game had up to a fifth of a
+    // second with 2.35 in place. That is exactly the "fraction of a second" of
+    // bars that showed up at cuts. Here it is one frame at most.
+    if (g_side_bars.load(std::memory_order_relaxed)) {
+        set_target_aspect_impl(true);
+    }
+
     if (g_side_bars.load(std::memory_order_relaxed) && g_anchor != 0) {
         const std::uintptr_t weight_addr = g_anchor + patterns::letterbox::kWeight;
         const std::uintptr_t bar235 = g_anchor + patterns::kDrawnBar235;
@@ -298,7 +309,11 @@ void poll_second_letterbox() { log_second_letterbox(); }
 //
 // Re-asserted from the worker loop rather than written once, because nothing
 // here has yet established whether the game reloads it.
-void set_target_aspect(bool to_sixteen_nine) {
+void set_target_aspect(bool to_sixteen_nine) { set_target_aspect_impl(to_sixteen_nine); }
+
+namespace {
+
+void set_target_aspect_impl(bool to_sixteen_nine) {
     if (g_anchor == 0) {
         return;
     }
@@ -333,6 +348,8 @@ void set_target_aspect(bool to_sixteen_nine) {
                      now, wanted);
     }
 }
+
+}  // namespace
 
 void restore() {
     if (g_immediate != 0 && g_hidden) {
