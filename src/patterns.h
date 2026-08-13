@@ -267,6 +267,21 @@ inline constexpr std::ptrdiff_t kDrawnBar235 = letterbox::kStride + letterbox::k
 inline constexpr std::ptrdiff_t kDrawnBarDisplay =
     letterbox::kStride + letterbox::kBarFractionDisplay;
 
+// void UpdateLetterbox()
+//
+// The function that computes the whole letterbox state once per frame -- weight,
+// both bar heights, the anchor byte. kLetterboxStructAnchor is a store inside
+// it.
+//
+// Hooked to set the target aspect on entry, before the bar height is computed
+// from it. Writing the target afterwards leaves a window in which the game has
+// already used the old value, and at a camera cut -- where the target is
+// reloaded -- that window is exactly when it matters.
+//
+// 20 bytes, no displacement inside them, one hit in the image.
+inline constexpr std::string_view kLetterboxUpdate =
+    "48 8B C4 48 89 58 08 57 48 83 EC 70 0F 29 70 E8 33 FF 40 38";
+
 // The second letterbox.
 //
 // Established by elimination: our zero survives the drawing we hook -- read back

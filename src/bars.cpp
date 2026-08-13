@@ -111,22 +111,33 @@ void write_float_at(std::uintptr_t address, float value) {
     std::memcpy(reinterpret_cast<void*>(address), &value, sizeof(value));
 }
 
+// Set the target aspect before the game reads it, not after.
+//
+// Re-asserting it from the worker loop left up to 200 ms in which a camera cut
+// -- each shot brings its own target -- had 2.35 in place, and that was the
+// flash of top and bottom bars at cuts. Doing it from the drawing hook narrowed
+// that to a single frame, and a single frame is still a visible frame.
+//
+// This runs at the top of the function that computes the bar height from the
+// target, so there is no window left at all: the value the game computes with is
+// ours from the outset, on every frame including the first of a new shot.
+using UpdateFn = void (*)();
+UpdateFn g_update_original = nullptr;
+void* g_update_target = nullptr;
+
+void update_detour() {
+    if (g_side_bars.load(std::memory_order_relaxed)) {
+        set_target_aspect_impl(true);
+    }
+    g_update_original();
+}
+
 // Replace the bar heights immediately before they are used.
 //
 // Writing them anywhere else does not survive: the game recomputes them every
 // frame and copies them into this second buffer, so the only moment at which the
 // values are both final and still ours is the entry to the drawing itself.
 void draw_detour() {
-    // Re-assert the target every frame, not every 200 ms.
-    //
-    // A camera cut evidently reloads it -- each shot brings its own value -- and
-    // with the worker loop as the only writer the game had up to a fifth of a
-    // second with 2.35 in place. That is exactly the "fraction of a second" of
-    // bars that showed up at cuts. Here it is one frame at most.
-    if (g_side_bars.load(std::memory_order_relaxed)) {
-        set_target_aspect_impl(true);
-    }
-
     if (g_side_bars.load(std::memory_order_relaxed) && g_anchor != 0) {
         const std::uintptr_t weight_addr = g_anchor + patterns::letterbox::kWeight;
         const std::uintptr_t bar235 = g_anchor + patterns::kDrawnBar235;
@@ -286,6 +297,35 @@ bool init_side_bars(const std::vector<mem::NamedRegion>& sections, std::uintptr_
         return false;
     }
     logger::info("side bars: drawing hooked at 0x{:016X}", hits.front());
+
+    // The update hook is what removes the last window; the side bars work
+    // without it, only with a flash at every cut. So it is worth reporting when
+    // it fails, and not worth failing over.
+    if (const auto update = mem::parse_pattern(patterns::kLetterboxUpdate)) {
+        std::vector<std::uintptr_t> update_hits;
+        for (const auto& [name, region] : sections) {
+            mem::find_all(region, *update, update_hits);
+        }
+        if (update_hits.size() != 1) {
+            logger::info("side bars: the letterbox update matched {} time(s), need 1 -- bars will",
+                         update_hits.size());
+            logger::info("side bars:   flash for one frame at camera cuts");
+        } else {
+            g_update_target = reinterpret_cast<void*>(update_hits.front());
+            if (MH_CreateHook(g_update_target, reinterpret_cast<void*>(&update_detour),
+                              reinterpret_cast<void**>(&g_update_original)) != MH_OK ||
+                MH_EnableHook(g_update_target) != MH_OK) {
+                logger::info("side bars: hooking the letterbox update failed");
+                g_update_target = nullptr;
+            } else {
+                logger::info("side bars: letterbox update hooked at 0x{:016X}",
+                             update_hits.front());
+            }
+        }
+    } else {
+        logger::info("side bars: malformed letterbox update signature");
+    }
+
     find_second_letterbox(sections);
     return true;
 }
@@ -343,9 +383,14 @@ void set_target_aspect_impl(bool to_sixteen_nine) {
         return;
     }
     write_float_at(address, wanted);
-    if (g_target_logged.fetch_add(1, std::memory_order_relaxed) < 4) {
-        logger::info("letterbox target aspect {:.5f} -> {:.5f} (top and bottom bars go to zero)",
-                     now, wanted);
+    // The count answers a question the picture cannot: whether the game reloads
+    // the target at all, and how often. One write in the whole session would mean
+    // the update hook is unnecessary; one per cut is what the flash predicted.
+    const int written = g_target_logged.fetch_add(1, std::memory_order_relaxed);
+    if (written < 4 || written % 100 == 0) {
+        logger::info(
+            "letterbox target aspect {:.5f} -> {:.5f} (write #{}, top and bottom bars go to zero)",
+            now, wanted, written + 1);
     }
 }
 
