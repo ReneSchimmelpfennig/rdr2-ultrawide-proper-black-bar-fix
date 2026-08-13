@@ -701,7 +701,6 @@ DWORD WINAPI worker(LPVOID) {
         // problem. Whether that is one place or five decides whether it is a
         // small change or the rewrite that was rejected at the start of the
         // project, and this answers it before anything is rewritten.
-        bool probed_readers = false;
         bool wide_display_applied = false;
 
         while (data) {
@@ -715,20 +714,18 @@ DWORD WINAPI worker(LPVOID) {
             // nearly worthless.
             // Wait a moment after the cutscene settles, so a correction has
             // actually happened and there is an address worth watching.
-            if (!probed_readers && is_readable(weight, sizeof(float)) &&
-                read_float(weight) > 0.999f) {
-                if (const std::uintptr_t fov_addr = fov::rendered_fov_address(); fov_addr != 0) {
-                    probed_readers = true;
-                    logger::info("");
-                    logger::info("=== who reads the rendered camera's field of view? ===");
-                    logger::info("watching 0x{:016X} for 12 s -- the address a correction last",
-                                 fov_addr);
-                    logger::info("landed in, so every reader of it is a real consumer.");
-                    logger::info("Anything outside RDR2.exe in the list below is our own detour.");
-                    watchpoint::find_writers(fov_addr, module.base, 12000,
-                                             watchpoint::Trap::ReadsAndWrites);
-                }
-            }
+            // The reader probe used to run here and it has been removed.
+            //
+            // It did its job -- it is how the focal-length clamp was found, and
+            // that fixed the transition judder. But it blocked this thread for
+            // twelve seconds, and everything else the loop does waited with it.
+            // On a wide display that delayed switching the side bars on by
+            // exactly that long, so the first quarter of a cutscene ran without
+            // them: 17:13:34 the aspect was known, 17:13:47 the bars came on.
+            //
+            // A diagnostic that stalls the feature it is meant to inform has
+            // outstayed its welcome. `watchpoint` remains available for the next
+            // question that needs it.
 
             // Cheap, and it settles the question about the intro's side bars.
             bars::verify();
