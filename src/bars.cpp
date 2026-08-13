@@ -184,8 +184,6 @@ void draw_detour() {
             }
         }
     }
-    log_second_letterbox();
-
     g_draw_original();
 
     // Did what we wrote survive the drawing?
@@ -291,6 +289,8 @@ void set_side_bars(bool on) {
 }
 
 bool side_bars() { return g_side_bars.load(std::memory_order_relaxed); }
+
+void poll_second_letterbox() { log_second_letterbox(); }
 
 void restore() {
     if (g_immediate != 0 && g_hidden) {

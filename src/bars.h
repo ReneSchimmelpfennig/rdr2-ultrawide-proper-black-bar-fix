@@ -42,6 +42,14 @@ void set_side_bars(bool on);
 
 [[nodiscard]] bool side_bars();
 
+// Samples the second letterbox's rectangle and logs it whenever it is not empty.
+//
+// Called from the worker loop rather than from our own drawing hook: the first
+// sampling attempt sat inside that hook and never saw anything, because the two
+// letterboxes are not on at the same time. The second one is most likely busy
+// exactly when ours is idle -- over the intro video, for one.
+void poll_second_letterbox();
+
 // Turns the bars off (patched) or back on (original). Safe to call repeatedly.
 bool set_hidden(bool hidden);
 
