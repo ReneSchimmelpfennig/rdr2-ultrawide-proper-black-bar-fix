@@ -138,10 +138,30 @@ void draw_detour() {
             const float was235 = read_float_at(bar235);
             const float wasDisplay = read_float_at(bar_display);
 
-            // Vertical bars off: the picture is already 2.35:1 and fills the
-            // height. The horizontal ones carry the whole difference.
-            write_float_at(bar235, 0.0f);
-            write_float_at(bar_display, ours);
+            // DIAGNOSTIC. Set kProbeTheFields back to false once the question is
+            // answered.
+            //
+            // Bars remain top and bottom throughout, although we write zero into
+            // bar235 on every frame and the log proves we are reading the game's
+            // own values from the right addresses beforehand. Three explanations
+            // have been offered for that and all three were wrong, so this asks
+            // the picture instead of me.
+            //
+            // Two unmistakable values go in: a fat 0.30 and a thin 0.05. Whatever
+            // shows up fat is drawn by bar235, whatever shows up thin by
+            // barDisplay, and anything that does not change is drawn by neither
+            // -- which would mean a second drawing path, the same suspicion the
+            // intro's bars raised yesterday.
+            constexpr bool kProbeTheFields = true;
+            if (kProbeTheFields) {
+                write_float_at(bar235, 0.30f);
+                write_float_at(bar_display, 0.05f);
+            } else {
+                // Vertical bars off: the picture is already 2.35:1 and fills the
+                // height. The horizontal ones carry the whole difference.
+                write_float_at(bar235, 0.0f);
+                write_float_at(bar_display, ours);
+            }
 
             if (g_side_logged.fetch_add(1, std::memory_order_relaxed) < 8) {
                 logger::info("side bars: aspect {:.4f} weight {:.4f}   top/bottom {:.6f} -> 0"
