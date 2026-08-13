@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "bars.h"
+#include "config.h"
 #include "dump.h"
 #include "fov.h"
 #include "framing.h"
@@ -486,6 +487,11 @@ DWORD WINAPI worker(LPVOID) {
     }
 
     report_environment();
+
+    // Read now, act later. Nothing consults these yet -- this run only proves
+    // the file can be found and parsed at all, which after the fov.txt episode
+    // is not something to take on trust.
+    config::load(g_self);
 
     if (const MH_STATUS status = MH_Initialize(); status != MH_OK) {
         logger::info("ERROR: MH_Initialize failed: {}", MH_StatusToString(status));
