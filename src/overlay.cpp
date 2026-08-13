@@ -8,6 +8,8 @@
 #include <atomic>
 #include <cstring>
 
+#include "fov.h"
+#include "framing.h"
 #include "log.h"
 #include "patterns.h"
 
@@ -87,6 +89,29 @@ void __fastcall detour(float* size, float* pos) {
             break;
 
         case Mode::Cover: {
+            // Wider than the film frame: the overlay belongs in the 2.35 window,
+            // not on the whole screen.
+            //
+            // Covering the full width of a 32:9 screen means scaling a 16:9
+            // asset by 2.0 and cropping half its height -- and the edges of the
+            // asset then sit inside the picture as ragged bands. That is what
+            // came back from the first 32:9 test, reported as frayed bars
+            // appearing from the overlay sequence onwards, which is exactly when
+            // this runs.
+            //
+            // The picture itself is framed at 2.35 by then, so the overlay has
+            // to be framed the same way or the two disagree.
+            const double aspect = fov::display_aspect();
+            if (aspect > framing::kUltrawideThreshold && size != nullptr && pos != nullptr) {
+                const double window = framing::kContentAspect / aspect;  // width of the frame
+                const double vertical = framing::kReferenceAspect / framing::kContentAspect;
+
+                size[0] = static_cast<float>(size[0] * window);
+                pos[0] = static_cast<float>(pos[0] * window + (1.0 - window) * 0.5);
+                size[1] = static_cast<float>(size[1] * vertical);
+                pos[1] = static_cast<float>(pos[1] * vertical + (1.0 - vertical) * 0.5);
+                break;
+            }
             // Full width as above, then the vertical axis scaled by k and
             // recentred -- the asset keeps its proportions and loses its top and
             // bottom instead. This is the same formula the game applies to the
