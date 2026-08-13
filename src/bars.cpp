@@ -125,7 +125,11 @@ using UpdateFn = void (*)();
 UpdateFn g_update_original = nullptr;
 void* g_update_target = nullptr;
 
+std::atomic<unsigned> g_update_calls{0};
+std::atomic<unsigned> g_draw_calls{0};
+
 void update_detour() {
+    g_update_calls.fetch_add(1, std::memory_order_relaxed);
     if (g_side_bars.load(std::memory_order_relaxed)) {
         set_target_aspect_impl(true);
     }
@@ -138,6 +142,7 @@ void update_detour() {
 // frame and copies them into this second buffer, so the only moment at which the
 // values are both final and still ours is the entry to the drawing itself.
 void draw_detour() {
+    g_draw_calls.fetch_add(1, std::memory_order_relaxed);
     if (g_side_bars.load(std::memory_order_relaxed) && g_anchor != 0) {
         const std::uintptr_t weight_addr = g_anchor + patterns::letterbox::kWeight;
         const std::uintptr_t bar235 = g_anchor + patterns::kDrawnBar235;
@@ -352,6 +357,14 @@ void poll_second_letterbox() { log_second_letterbox(); }
 // here has yet established whether the game reloads it.
 void set_target_aspect(bool to_sixteen_nine) { set_target_aspect_impl(to_sixteen_nine); }
 
+std::uintptr_t top_bottom_address() {
+    return g_anchor == 0 ? 0 : g_anchor + patterns::kDrawnBar235;
+}
+
+float top_bottom_bar() {
+    return g_anchor == 0 ? 0.0f : read_float_at(g_anchor + patterns::kDrawnBar235);
+}
+
 void probe_during_overlay() {
     if (!g_side_bars.load(std::memory_order_relaxed) || g_anchor == 0) {
         return;
@@ -364,8 +377,15 @@ void probe_during_overlay() {
 
     const int nth = g_overlay_logged.fetch_add(1, std::memory_order_relaxed);
     if (nth < 8 || nth % 300 == 0) {
-        logger::info("overlay probe: target {:.5f}  weight {:.4f}  top/bottom {:.6f}  sides {:.6f}",
-                     target, weight, bar235, sides);
+        // The call counts are the point of this line, not decoration. If the
+        // update stops advancing while the drawing keeps going, the bar height
+        // is simply stale and no one is writing it -- which is a different bug
+        // from someone overwriting it, and wants a different fix.
+        logger::info("overlay probe: target {:.5f}  weight {:.4f}  top/bottom {:.6f}  sides {:.6f}"
+                     "   updates {}  draws {}",
+                     target, weight, bar235, sides,
+                     g_update_calls.load(std::memory_order_relaxed),
+                     g_draw_calls.load(std::memory_order_relaxed));
         if (g_second_rect != 0) {
             logger::info("overlay probe:   second letterbox {:.6f} {:.6f} {:.6f} {:.6f}",
                          read_float_at(g_second_rect), read_float_at(g_second_rect + 4),

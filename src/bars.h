@@ -68,6 +68,17 @@ void set_target_aspect(bool to_sixteen_nine);
 // Does nothing unless the side bars are on, so 21:9 never reaches it.
 void probe_during_overlay();
 
+// The top/bottom bar height the drawing actually reads, and where it lives.
+//
+// Everywhere but the overlay this sits at 6.25e-5 -- 0.09 px, invisible. During
+// the overlay it reads 0.121749, which is the height for a target of 2.35 even
+// though the target field says 1.778. Something other than the computation we
+// hooked put it there, or nothing did and it is simply stale. A write watchpoint
+// on this address separates the two, and zero hits is as much of an answer as
+// any address.
+[[nodiscard]] std::uintptr_t top_bottom_address();
+[[nodiscard]] float top_bottom_bar();
+
 // Turns the bars off (patched) or back on (original). Safe to call repeatedly.
 bool set_hidden(bool hidden);
 

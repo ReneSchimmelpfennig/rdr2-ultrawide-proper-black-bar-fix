@@ -702,6 +702,7 @@ DWORD WINAPI worker(LPVOID) {
         // small change or the rewrite that was rejected at the start of the
         // project, and this answers it before anything is rewritten.
         bool wide_display_applied = false;
+        bool bar_writers_watched = false;
 
         while (data) {
             if (g_request_2d_search.exchange(false)) {
@@ -732,6 +733,25 @@ DWORD WINAPI worker(LPVOID) {
             bars::poll_second_letterbox();
             if (bars::side_bars()) {
                 bars::set_target_aspect(true);
+            }
+
+            // Who writes the top/bottom bar while it is wrong?
+            //
+            // Armed on the fault itself rather than on a guess about when it
+            // happens: everywhere but the overlay this value is 6.25e-5, so
+            // anything above a thousandth is the bug and nothing else. Runs
+            // once, for a second and a bit -- long enough for several frames,
+            // short enough not to repeat the twelve-second stall that once held
+            // the side bars back.
+            //
+            // Zero hits is not a failed measurement here. It would mean the
+            // value is stale rather than overwritten, and that is the answer.
+            if (!bar_writers_watched && bars::side_bars() && bars::top_bottom_bar() > 0.001f) {
+                bar_writers_watched = true;
+                logger::info("");
+                logger::info("top/bottom bar reads {:.6f} -- watching for whoever writes it",
+                             bars::top_bottom_bar());
+                watchpoint::find_writers(bars::top_bottom_address(), module.base, 1200);
             }
 
             // Once, as soon as the aspect is known. On 21:9 the condition is
