@@ -90,6 +90,8 @@ The correction stops at the film frame either way — the picture keeps the full
 height of the intended composition. What differs is the 51% of extra width that
 leaves at the sides:
 
+![Three 32:9 frames: the game as shipped with bars on all four sides, the same shot framed by side bars, and the same shot expanded to both edges](docs/comparison-32-9.svg)
+
 ```ini
 [Cutscenes]
 ExpandCutscenesSideways = false
