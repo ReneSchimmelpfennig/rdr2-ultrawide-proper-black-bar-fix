@@ -107,8 +107,45 @@ where 22.3802 is 39.3141 corrected twice, and the picture jitters frame by frame
 The premise is wrong, not the threshold, so no amount of tuning saves it. What a
 future attempt needs is provenance that survives propagation — something in the
 value itself, or a signal from outside the value. The tag in the low mantissa
-bits was that, and rounding destroys it; that is the hard part, and it is still
-unsolved.
+bits was that, and rounding destroys it.
+
+### What worked instead: separating the values
+
+Detection failed twice, so the third attempt stopped detecting. If a correction
+would land close enough to an authored value to be confused with it, it is moved
+0.004° clear — ten times the ring's tolerance, with the round trip's own rounding
+of about 1e-4 still comfortably inside. On a 39° field that is 1e-4 relative, a
+fraction of a pixel at the frame edge.
+
+The property that makes it safe is that it changes no decision at all. No branch
+is taken differently; only the value written changes, by an amount nobody can
+see. Both earlier attempts failed by creating a new way for the correction to
+compound, and this one cannot: at worst it does nothing.
+
+Measured over one session with four cutscenes: 13 separations, and the three
+remaining MISS events all sat at a letterbox weight of 0.0003, 0.0000 and 0.0123
+— the edge of the ramp, where the correction is a hundredth of a degree. The
+session before, on the same scenes, the misses sat at full weight and were 11 to
+17° wrong. That is the difference between a visible flash and bookkeeping.
+
+### Still open: the sustained jump at a cut inside the ramp
+
+One cutscene shows two hard jumps rather than a flash, and the log says they are
+a different animal:
+
+```
+CUT  w 0.9598  slot 29..44  in 37.7233 -> 20.5340  (delta -17.1893)
+                            shader 37.7233   decision skip-own
+```
+
+A value arrives in a dozen structures at once, every one of them is waved through
+as ours, the shader still carries the old camera, and the new value then holds
+for 0.7 seconds — a whole shot, not a frame. It happens near the end of the ramp,
+at weight 0.96.
+
+Whether 20.5340 was ever ours is not answerable from that log: the CORRECT lines
+run on a budget and none survives in that window. Settling it needs the ring
+match itself logged — which entry matched, and when it was written.
 
 ## Open: the 2D layer
 
