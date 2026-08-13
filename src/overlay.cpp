@@ -115,8 +115,17 @@ void __fastcall detour(float* size, float* pos) {
             // reciprocal. I wrote the reciprocal first and the overlay came back
             // stretched across the width, which is exactly what that mistake
             // looks like.
+            // Tied to the side bars, not to the aspect ratio.
+            //
+            // Framing the overlay at 2.35 is right only because the picture
+            // around it is framed at 2.35. With ExpandCutscenesSideways = true
+            // there are no side bars, the picture runs to both edges, and an
+            // overlay stopping at the film frame would sit in the middle with
+            // scene showing past it. Then the full-width path below is the
+            // matching one.
             const double aspect = fov::display_aspect();
-            if (aspect > framing::kUltrawideThreshold && size != nullptr && pos != nullptr) {
+            if (bars::side_bars() && aspect > framing::kUltrawideThreshold && size != nullptr &&
+                pos != nullptr) {
                 const double horizontal = aspect / framing::kContentAspect;
                 // Cover the frame: match its width and let the height overflow,
                 // 16:9 into 2.35 being 1.32 times too tall.

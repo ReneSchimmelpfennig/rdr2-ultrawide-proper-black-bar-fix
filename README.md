@@ -42,8 +42,33 @@ letterbox animation, so the transition follows the bars rather than snapping.
 | Black bars | removed, pillarbox and letterbox alike |
 | Full-screen overlays and the intro video | fixed — they cover the whole screen, no smearing |
 | Cinematic camera | corrected, including the cut into the shot |
+| Displays wider than 21:9 (32:9) | framed at the film frame, configurable — see below |
 | **Credit inserts and subtitles** | **not fixed yet — see below** |
 | Rare single-frame flash | see below |
+
+## Displays wider than 21:9
+
+21:9 is almost exactly the 2.35:1 frame cutscenes are composed for, so the
+corrected picture fills the screen and there is nothing to decide. 32:9 is
+wider than the composition itself, and then there is.
+
+The correction stops at the film frame either way — the picture keeps the full
+height of the intended composition. What differs is the 51% of extra width that
+leaves at the sides:
+
+```ini
+[Cutscenes]
+ExpandCutscenesSideways = false
+```
+
+`false`, the default, covers it with black bars: you see the shot as it was
+framed, with the screen edges unused. `true` shows what is there instead, which
+is more scene than anyone composed — the same trade the bar-removal-only mods
+make, offered here as a choice rather than as the only option.
+
+The file is `RDR2UltrawideCutsceneFix.ini`, next to the plugin, and it is
+optional: without it the default applies. On 21:9 and narrower nothing in it is
+consulted at all, so it cannot change what those displays already get.
 
 ### Known issue: a rare single-frame flash
 
@@ -96,10 +121,15 @@ evidence and the plan. Contributions welcome.
 - Red Dead Redemption 2, tested on **1.0.1491.50**
 - An ASI loader — [Ultimate ASI Loader, x64 `version.dll`](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/download/x64-latest/version-x64.zip)
 - An ultrawide display. On 16:9 the plugin computes `k = 1` and does nothing.
+  21:9 is what this is built and tested for; wider than that has its own section
+  below.
 
 ## Installation
 
 Copy `RDR2UltrawideCutsceneFix.asi` into the game folder, next to `RDR2.exe`.
+
+On a display wider than 21:9, copy `RDR2UltrawideCutsceneFix.ini` alongside it if
+you want to change the setting above. Everyone else can ignore it.
 
 ## Log
 
@@ -118,6 +148,13 @@ cmake --build --preset release
 
 `scanner_test.exe` covers the pattern scanner, the framing maths, the image
 dumper and the log fallback, without a test framework.
+
+If CMake is unavailable, `tools\build-direct.ps1` builds the same thing with
+`cl.exe` alone, and `-Tests` builds and runs the tests with it:
+
+```powershell
+.\tools\build-direct.ps1 -Tests
+```
 
 ## How it works
 

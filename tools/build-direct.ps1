@@ -17,6 +17,8 @@
 # them contain spaces, and a trailing backslash before the closing quote would be
 # read as an escape.
 
+param([switch]$Tests)
+
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
@@ -96,3 +98,38 @@ if ($LASTEXITCODE -ne 0) { throw "link failed" }
 
 Get-Item "$root\build\Release\RDR2UltrawideCutsceneFix.asi" |
     Select-Object Name, Length, LastWriteTime | Format-List
+
+# The tests, which CMake used to build and nothing else did.
+#
+# Without this they simply stopped being run: build\Release\scanner_test.exe was
+# still there, still passing, and four days stale -- which is worse than having
+# no tests at all, because it looks like evidence.
+#
+# Only the sources the test actually pulls in. Linking all of src would drag in
+# dllmain and MinHook for no reason.
+if ($Tests) {
+    $testOut = "$root\build\direct-tests"
+    New-Item -ItemType Directory -Force $testOut | Out-Null
+    Remove-Item "$testOut\*.obj" -ErrorAction SilentlyContinue
+
+    $testSources = @((Q "$root\tests\scanner_test.cpp"), (Q "$root\src\mem.cpp"),
+                     (Q "$root\src\log.cpp"), (Q "$root\src\dump.cpp"), (Q "$root\src\hunt.cpp"))
+    $testRsp = "$testOut\tests.rsp"
+    (@("/nologo", "/c", "/O2", "/MT", "/DNDEBUG", "/DWIN32_LEAN_AND_MEAN", "/DNOMINMAX",
+       "/std:c++20", "/EHsc", (QArg "/Fo" "$testOut/")) + $includes + $testSources) -join "`r`n" |
+        Set-Content $testRsp -Encoding ASCII
+    & $cl "@$testRsp"
+    if ($LASTEXITCODE -ne 0) { throw "tests failed to compile" }
+
+    $testObjects = Get-ChildItem $testOut -Filter "*.obj" | ForEach-Object { Q $_.FullName }
+    $testLinkRsp = "$testOut\link.rsp"
+    (@("/nologo", "/MACHINE:X64", "/SUBSYSTEM:CONSOLE") + $libs +
+     @((QArg "/OUT:" "$testOut\scanner_test.exe")) + $testObjects +
+     @("kernel32.lib", "user32.lib", "version.lib", "psapi.lib")) -join "`r`n" |
+        Set-Content $testLinkRsp -Encoding ASCII
+    & $link "@$testLinkRsp"
+    if ($LASTEXITCODE -ne 0) { throw "tests failed to link" }
+
+    & "$testOut\scanner_test.exe"
+    if ($LASTEXITCODE -ne 0) { throw "tests failed" }
+}

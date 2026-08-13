@@ -159,6 +159,40 @@ Which reinterprets the measurement this whole investigation started from.
 cutscene rectangle at all -- it is the game's 16:9 box, cropped to 2.35:1. There
 is no separate "cutscene 2D viewport" to find.
 
+## Displays wider than the film frame
+
+On 21:9 the corrected picture happens to fill the screen, because 2.3889 and the
+2.35 the shots are composed for are the same thing to within a percent. Wider
+than that they are not, and three parts of the plugin have to agree about what
+to do.
+
+**The correction stops at the film frame.** `framing::clamped_for_wide_display`
+replaces `k = (16/9)/aspect` with `(16/9)/2.35` above
+`framing::kUltrawideThreshold`, so the vertical field of view lands on the height
+of the intended composition instead of continuing to shrink. This is not
+optional and does not depend on the setting: 32:9 taken all the way would be a
+strip of a picture.
+
+Note what that leaves. A vertical field of view fixed at the composition's height
+on a 3.556-wide screen produces `3.556/2.35 = 1.51` times the intended width --
+the extra scene is *already there*, rendered, and the only question is whether to
+show it.
+
+**The side bars answer that question.** `ExpandCutscenesSideways = false`, the
+default, writes `(1 - 2.35/aspect)/2` into the drawn bar width every frame, so
+the composition is framed rather than extended. `true` leaves it alone and the
+extra 51% is simply visible.
+
+**The full-screen overlays follow the bars, not the aspect ratio.** The 16:9
+overlay assets are mapped into whatever the picture around them occupies: the
+2.35 window when the side bars are on, the full width when they are not. The
+condition in `overlay.cpp` is `bars::side_bars()` for exactly this reason -- with
+the sides expanded, an overlay stopping at the film frame would sit in the middle
+with scene showing past its edges.
+
+Everything above is gated on the display aspect, so a 21:9 or 16:9 machine never
+enters any of it, and the setting cannot change what those displays already get.
+
 ## The 2D layer: two more dead ends, and what they narrowed down
 
 **The bar heights have no consumer other than the bars.** Traced exhaustively
