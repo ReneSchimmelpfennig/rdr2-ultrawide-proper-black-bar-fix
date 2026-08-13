@@ -472,6 +472,80 @@ bool matches_something_we_wrote(float value) {
 
 bool is_our_own_output(float value) { return matches_something_we_wrote(value); }
 
+// Make the collision impossible instead of trying to detect it.
+//
+// Two attempts at telling our own output from an authored value went wrong,
+// because the provenance of a float is not in the float. This gives up on
+// detecting and removes the ambiguity at the source: if a correction would land
+// close enough to an authored value to be confused with it, move it away.
+//
+// The flash was our 39.3139 against an authored 39.3141, 5e-6 apart inside a
+// 1e-5 window. Push our value four thousandths of a degree clear and the ring
+// cannot mistake the two: they are then ten times further apart than its
+// tolerance, with the round trip's own rounding of about 1e-4 absolute still
+// comfortably inside.
+//
+// What it costs: 0.004 deg on a 39 deg field is 1e-4 relative, a fraction of a
+// pixel at the frame edge, and the same order as the rounding the value picks up
+// anyway on its way through focal length.
+//
+// What it does not cost: a single decision. Nothing below reads a flag or takes
+// a branch it did not take before -- only the value we write changes, by an
+// amount nobody can see. That matters, because both previous attempts failed by
+// introducing a new way for the correction to compound, and this one cannot: at
+// worst it does nothing.
+constexpr bool kSeparateFromAuthored = true;
+
+// Values proven to be authored: seen as an input while matching nothing we ever
+// wrote. That proof is the point -- a guess here would poison the set.
+constexpr std::size_t kAuthoredRing = 32;
+std::atomic<std::uint32_t> g_authored[kAuthoredRing]{};
+std::atomic<std::size_t> g_authored_next{0};
+std::atomic<unsigned long long> g_separations{0};
+
+void remember_authored(float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const std::size_t index =
+        g_authored_next.fetch_add(1, std::memory_order_relaxed) % kAuthoredRing;
+    g_authored[index].store(bits, std::memory_order_relaxed);
+}
+
+// Five times the ring's tolerance: close enough to be confused, and the value
+// has to clear all of it plus the rounding.
+constexpr float kConfusable = 5.0f * kOursTolerance;
+constexpr float kSeparation = 0.004f;
+
+float separate_from_authored(float value) {
+    if (!kSeparateFromAuthored) {
+        return value;
+    }
+    // Four attempts, because stepping clear of one authored value can land on
+    // the next. Four steps is 0.016 deg, still invisible; giving up after that
+    // simply leaves today's behaviour.
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        bool collides = false;
+        for (std::size_t i = 0; i < kAuthoredRing; ++i) {
+            const std::uint32_t bits = g_authored[i].load(std::memory_order_relaxed);
+            if (bits == 0) {
+                continue;
+            }
+            float authored = 0.0f;
+            std::memcpy(&authored, &bits, sizeof(authored));
+            if (std::fabs(value - authored) <= std::fabs(value) * kConfusable) {
+                collides = true;
+                break;
+            }
+        }
+        if (!collides) {
+            return value;
+        }
+        value += kSeparation;
+        g_separations.fetch_add(1, std::memory_order_relaxed);
+    }
+    return value;
+}
+
 // Same question, but knowing which object is asking.
 //
 // `previous_input` is what this object carried on the call before, `our_last` the
@@ -763,6 +837,14 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     const float previous_input =
         (slot != kNoSlot) ? g_dst_prev_in[slot].exchange(original, std::memory_order_relaxed)
                           : 0.0f;
+
+    // Collected here rather than at the correction site, because the value that
+    // causes the flash belongs to a camera we are *not* correcting -- it never
+    // reaches that site. Every structure passes through here, and matching
+    // nothing in the ring is proof the value is not ours.
+    if (!matches_something_we_wrote(original)) {
+        remember_authored(original);
+    }
 
     // Is *this* destination the one being rendered right now?
     //
@@ -1160,6 +1242,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         }
     }
 
+    result = separate_from_authored(result);
     result = tag(result);
     // Only corrections go into the ring. That is the whole point of it: it has
     // to hold what we wrote, not what the game wrote.
@@ -1370,6 +1453,7 @@ void clamp_detour(std::uintptr_t camera) {
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
             const double factor = framing::blended_factor(scaled, w);
             float corrected = static_cast<float>(framing::corrected_vfov_deg(before, factor));
+            corrected = separate_from_authored(corrected);
             corrected = tag(corrected);
             remember_our_output(corrected);
             g_clamp_last_ours[seat].store(corrected, std::memory_order_relaxed);
@@ -1682,6 +1766,8 @@ double display_aspect() { return g_display_aspect.load(std::memory_order_relaxed
 
 
 unsigned long long identity_saves() { return g_identity_saves.load(std::memory_order_relaxed); }
+
+unsigned long long separations() { return g_separations.load(std::memory_order_relaxed); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();

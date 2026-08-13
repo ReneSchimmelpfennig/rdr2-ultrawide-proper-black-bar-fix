@@ -775,9 +775,9 @@ DWORD WINAPI worker(LPVOID) {
                     in_cutscene = false;
                     logger::info("");
                     logger::info("--- the cutscene just ended (the counts that matter) ---");
-                    logger::info("identity test overruled the ring {} time(s) so far -- each one a"
-                                 " frame that would have flashed",
-                                 fov::identity_saves());
+                    logger::info("corrections nudged clear of an authored value: {}  (identity"
+                                 " test: {})",
+                                 fov::separations(), fov::identity_saves());
                     uibox::report(module.base);
                     overlay::report(module.base);
                 }

@@ -135,4 +135,12 @@ void report_destinations(std::uintptr_t module_base);
 // put would mean the test is firing on the wrong cases.
 [[nodiscard]] unsigned long long identity_saves();
 
+// How many times a correction was nudged clear of an authored value.
+//
+// Zero means the collision the flash comes from never arose in that session, and
+// the separation changed nothing -- which is the expected reading most of the
+// time, since the flash itself is about three per half hour. A number here
+// against a MISS count of zero is the result worth having.
+[[nodiscard]] unsigned long long separations();
+
 }  // namespace fov
