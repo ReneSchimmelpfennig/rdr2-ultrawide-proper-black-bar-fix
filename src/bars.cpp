@@ -388,7 +388,7 @@ void probe_during_overlay() {
     const float sides = read_float_at(g_anchor + patterns::kDrawnBarDisplay);
 
     const int nth = g_overlay_logged.fetch_add(1, std::memory_order_relaxed);
-    if (nth < 8 || nth % 300 == 0) {
+    if (nth < 8) {
         // The call counts are the point of this line, not decoration. If the
         // update stops advancing while the drawing keeps going, the bar height
         // is simply stale and no one is writing it -- which is a different bug

@@ -702,7 +702,6 @@ DWORD WINAPI worker(LPVOID) {
         // small change or the rewrite that was rejected at the start of the
         // project, and this answers it before anything is rewritten.
         bool wide_display_applied = false;
-        bool bar_writers_watched = false;
 
         while (data) {
             if (g_request_2d_search.exchange(false)) {
@@ -735,27 +734,16 @@ DWORD WINAPI worker(LPVOID) {
                 bars::set_target_aspect(true);
             }
 
-            // Who computes the wrong top/bottom bar?
+            // Who computes the wrong top/bottom bar during the overlay is still
+            // open, and deliberately not watched here.
             //
-            // The first run of this watched the drawn copy and got one writer:
-            // the buffer copy at module +0x31FCCE, which only passes the value
-            // along. So it now watches the source instead. The drawing is fixed
-            // either way -- this is about the cause, and the cause is worth
-            // knowing before the next update moves everything.
-            //
-            // Armed on the fault itself rather than on a guess about when it
-            // happens: everywhere but the overlay this value is 6.25e-5, so
-            // anything above a thousandth is the bug and nothing else. Runs
-            // once, for a second and a bit -- long enough for several frames,
-            // short enough not to repeat the twelve-second stall that once held
-            // the side bars back.
-            if (!bar_writers_watched && bars::side_bars() && bars::top_bottom_bar() > 0.001f) {
-                bar_writers_watched = true;
-                logger::info("");
-                logger::info("top/bottom bar reads {:.6f} -- watching for whoever writes it",
-                             bars::top_bottom_bar());
-                watchpoint::find_writers(bars::top_bottom_address(), module.base, 1200);
-            }
+            // The watchpoint that answered the first half of the question is one
+            // line away -- arm it on bars::top_bottom_address() when
+            // bars::top_bottom_bar() rises above a thousandth, which everywhere
+            // but the overlay it never does. It stalls this thread for its whole
+            // duration though, and this thread also switches the side bars on, so
+            // it does not belong in a build anyone plays. See
+            // docs/measurements.md, run 3.
 
             // Once, as soon as the aspect is known. On 21:9 the condition is
             // false and nothing here ever runs.
