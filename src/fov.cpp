@@ -418,16 +418,34 @@ constexpr float kOursTolerance = 1e-5f;
 //                                    camera has been carrying all along
 //
 // Nothing copies a value that is already there. So a value that equals this
-// structure's own previous input is authored, whatever the ring says about it,
-// and the 5e-6 coincidence that caused the flash resolves the right way: the
-// cutscene camera's authored 39.3141 was 39.3141 the frame before too, while our
-// 39.3139 had just arrived at the gameplay camera.
+// structure's own previous input is authored, whatever the ring says about it.
 //
-// The one case this cannot separate is a camera whose authored value moves every
-// frame *and* lands inside 1e-5 of one of our outputs. That is the present
-// behaviour, so it is not a regression, and it is far less likely than the case
-// this removes.
-constexpr bool kIdentityTest = true;
+// REFUTED IN GAME, and the refutation is worth more than the idea was.
+//
+// The game copies one camera state into dozens of structures and does it again
+// on every call. A propagated value therefore looks *unchanged* from its second
+// call onwards -- indistinguishable from an authored one by exactly the test
+// above. The log showed it plainly: slots 3, 50, 25 and 27 all carrying the same
+// 39.3248, and then
+//
+//   MISS  slot 3  we wrote 22.3802, the picture shows 39.3141
+//
+// where 22.3802 is 39.3141 corrected twice. 200 of them in one session, visible
+// as a picture jittering frame by frame.
+//
+// So the discriminator does not exist in this form: "did the value change" says
+// nothing about where it came from when the source rewrites it every call. Not a
+// tuning problem -- the premise is wrong, and no threshold repairs it.
+//
+// Left in place, switched off, because the machinery it needed (per-slot input
+// history, per-object memory of our own writes) is sound and would be rebuilt
+// identically by whoever tries the next idea.
+// OFF. Measured in game: the picture jitters frame by frame in cutscenes, which
+// is the signature of a camera being corrected twice in some frames and not at
+// all in others. So one of the two rules below fires on cases it was not meant
+// for, and the reasoning above is wrong somewhere. The log says where; until
+// then this stays off and the ring alone decides, exactly as in v0.5.0.
+constexpr bool kIdentityTest = false;
 
 // The input this structure carried on the call before, maintained for every
 // slot on every call -- unlike g_dst_last_in, which only tracks the rendered

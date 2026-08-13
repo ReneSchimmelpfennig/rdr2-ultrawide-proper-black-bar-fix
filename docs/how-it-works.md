@@ -73,6 +73,42 @@ So that nobody repeats it:
 - **Zeroing the bar heights so the 2D layer would lay out full screen.** No
   effect whatsoever, cleanly verified. The 2D layer takes its safe area from
   somewhere else.
+- **Telling our own output from an authored value by asking whether it changed.**
+  See below — the most instructive failure of the lot.
+
+### Why "did the value change" cannot identify our own output
+
+The single-frame flash comes from the ring of recently written values matching an
+authored value by coincidence: our 39.3139 against another camera's authored
+39.3141, 5e-6 apart, inside a tolerance that has to be loose because the value
+comes back rounded.
+
+The ring cannot simply be replaced by a per-camera test. It matches across
+structures on purpose — it catches our own output when the game hands it to a
+*different* camera state as input, and without that the correction compounds into
+a threefold zoom.
+
+So the idea was to keep the ring and add a discriminator: a copied value has
+*changed*, an authored value has been sitting there all along. Nothing copies a
+value that is already there.
+
+Except that it does. The game copies one camera state into dozens of structures
+and repeats it on every call — the log shows slots 3, 50, 25 and 27 all carrying
+the same 39.3248 in the same frame. From its second call onwards a propagated
+value is unchanged, and therefore indistinguishable from an authored one by
+exactly this test. Measured result: 200 double corrections in one session,
+
+```
+MISS  w 1.0000  slot 3  we wrote 22.3802, the picture shows 39.3141
+```
+
+where 22.3802 is 39.3141 corrected twice, and the picture jitters frame by frame.
+
+The premise is wrong, not the threshold, so no amount of tuning saves it. What a
+future attempt needs is provenance that survives propagation — something in the
+value itself, or a signal from outside the value. The tag in the low mantissa
+bits was that, and rounding destroys it; that is the hard part, and it is still
+unsolved.
 
 ## Open: the 2D layer
 
