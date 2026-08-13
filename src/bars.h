@@ -68,14 +68,15 @@ void set_target_aspect(bool to_sixteen_nine);
 // Does nothing unless the side bars are on, so 21:9 never reaches it.
 void probe_during_overlay();
 
-// The top/bottom bar height the drawing actually reads, and where it lives.
+// The computed top/bottom bar height, before it is copied to the buffer the
+// drawing reads.
 //
-// Everywhere but the overlay this sits at 6.25e-5 -- 0.09 px, invisible. During
-// the overlay it reads 0.121749, which is the height for a target of 2.35 even
-// though the target field says 1.778. Something other than the computation we
-// hooked put it there, or nothing did and it is simply stale. A write watchpoint
-// on this address separates the two, and zero hits is as much of an answer as
-// any address.
+// A watchpoint on the drawn copy named exactly one writer -- the copy itself,
+// module +0x31FCCE, a `movsd` that moves both bar heights over in one go. So the
+// value is only passed through, and the question moves one link up the chain to
+// here: everywhere but the overlay this is 6.25e-5, during the overlay it is
+// 0.121749, the height for a target of 2.35 while the target measurably reads
+// 1.778. Whoever writes that does not use the input we set.
 [[nodiscard]] std::uintptr_t top_bottom_address();
 [[nodiscard]] float top_bottom_bar();
 

@@ -184,11 +184,23 @@ void draw_detour() {
             // barDisplay, and anything that does not change is drawn by neither
             // -- which would mean a second drawing path, the same suspicion the
             // intro's bars raised yesterday.
-            // Only the sides are set here now. The top and bottom are dealt with
-            // at their source instead -- see set_target_aspect -- because the
-            // game recomputes the bar height every frame from an input we can
-            // reach, and overwriting the output was always going to be a race we
-            // could only sometimes win.
+            // The sides, and the top and bottom after all.
+            //
+            // set_target_aspect handles the top and bottom at their source and
+            // is still the main mechanism -- but the full-screen overlay reaches
+            // the drawing with 0.121749 in this field, the height for a target of
+            // 2.35, while the target itself measurably reads 1.778. Whatever
+            // computes that does not go through the input we set.
+            //
+            // This does, and it is the same write as the one two lines down that
+            // has been putting the side bars on screen correctly all along: the
+            // drawing reads this buffer, and we are the last to touch it.
+            //
+            // Not zero. The update ends with `if (bar == 0.0) bar = 1.0`, and a
+            // bar of 1.0 is a black screen. 6.25e-5 is what the game itself
+            // computes from a target of 1.778 -- 0.09 px at 1440.
+            constexpr double kInvisible = 6.25e-5;
+            write_float_at(bar235, static_cast<float>(kInvisible * weight));
             write_float_at(bar_display, ours);
 
             // How many times is the drawing called per frame? The weight is
@@ -358,11 +370,11 @@ void poll_second_letterbox() { log_second_letterbox(); }
 void set_target_aspect(bool to_sixteen_nine) { set_target_aspect_impl(to_sixteen_nine); }
 
 std::uintptr_t top_bottom_address() {
-    return g_anchor == 0 ? 0 : g_anchor + patterns::kDrawnBar235;
+    return g_anchor == 0 ? 0 : g_anchor + patterns::letterbox::kBarFraction235;
 }
 
 float top_bottom_bar() {
-    return g_anchor == 0 ? 0.0f : read_float_at(g_anchor + patterns::kDrawnBar235);
+    return g_anchor == 0 ? 0.0f : read_float_at(g_anchor + patterns::letterbox::kBarFraction235);
 }
 
 void probe_during_overlay() {

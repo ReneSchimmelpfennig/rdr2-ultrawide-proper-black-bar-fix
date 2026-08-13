@@ -735,7 +735,13 @@ DWORD WINAPI worker(LPVOID) {
                 bars::set_target_aspect(true);
             }
 
-            // Who writes the top/bottom bar while it is wrong?
+            // Who computes the wrong top/bottom bar?
+            //
+            // The first run of this watched the drawn copy and got one writer:
+            // the buffer copy at module +0x31FCCE, which only passes the value
+            // along. So it now watches the source instead. The drawing is fixed
+            // either way -- this is about the cause, and the cause is worth
+            // knowing before the next update moves everything.
             //
             // Armed on the fault itself rather than on a guess about when it
             // happens: everywhere but the overlay this value is 6.25e-5, so
@@ -743,9 +749,6 @@ DWORD WINAPI worker(LPVOID) {
             // once, for a second and a bit -- long enough for several frames,
             // short enough not to repeat the twelve-second stall that once held
             // the side bars back.
-            //
-            // Zero hits is not a failed measurement here. It would mean the
-            // value is stale rather than overwritten, and that is the answer.
             if (!bar_writers_watched && bars::side_bars() && bars::top_bottom_bar() > 0.001f) {
                 bar_writers_watched = true;
                 logger::info("");
