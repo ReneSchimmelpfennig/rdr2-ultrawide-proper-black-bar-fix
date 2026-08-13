@@ -418,6 +418,30 @@ bool matches_something_we_wrote(float value) {
 
 bool is_our_own_output(float value) { return matches_something_we_wrote(value); }
 
+// Step one of the wider-than-21:9 work: say which side of the line this display
+// is on, and change nothing.
+//
+// Everything that follows -- black bars for the sides, the sideways expansion,
+// the matching overlay zoom -- hangs off this one test, so that a 21:9 screen
+// never enters any of it. Reported once, from the same k the correction uses, so
+// there is no second measurement to disagree with the first.
+std::atomic<bool> g_aspect_reported{false};
+
+void report_aspect_once(double k) {
+    if (g_aspect_reported.exchange(true, std::memory_order_relaxed)) {
+        return;
+    }
+    const double aspect = framing::aspect_from_correction(k);
+    const bool ultrawide = aspect > framing::kUltrawideThreshold;
+    logger::info("");
+    logger::info("display aspect {:.4f} (k = {:.6f})", aspect, k);
+    if (ultrawide) {
+        logger::info("  wider than 21:9 -- the settings for wide displays apply");
+    } else {
+        logger::info("  21:9 or narrower -- nothing for wide displays applies");
+    }
+}
+
 // One correction per frame, during a ramp.
 //
 // The tag catches a corrected value that is copied onwards untouched. It cannot
@@ -940,6 +964,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
                                                GetSystemMetrics(SM_CYSCREEN));
             }
+            report_aspect_once(k);
             // Strength scales how far k moves away from 1, still in tangent
             // space, so the blend with the letterbox weight stays intact.
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());

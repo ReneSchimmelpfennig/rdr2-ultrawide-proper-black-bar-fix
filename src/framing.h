@@ -19,7 +19,31 @@ inline constexpr double kReferenceAspect = 16.0 / 9.0;
 // Above roughly 21:9 the correction starts cropping harder than it gains, and
 // 32:9 ends up noticeably zoomed in. Clamp the aspect the correction is derived
 // from; 2.4 covers 3440x1440 (2.3889) with a little headroom.
+//
+// CAVEAT: this clamp only applies to correction_factor(), which is the fallback.
+// The path that actually runs is correction_factor_from_bars(), which has no
+// clamp -- so on 32:9 the correction is currently about twice as strong as
+// intended. Nothing is done about that yet on purpose; see kUltrawideThreshold.
 inline constexpr double kMaxCorrectedAspect = 2.4;
+
+// Where "wider than 21:9" begins.
+//
+// 3440x1440 is 2.3889 and must stay on the narrow side of this with room to
+// spare, because the behaviour there is finished and must not change. 2.45 is
+// comfortably above it and comfortably below 32:9 (3.5556).
+//
+// Everything to do with wider displays hangs off this test, so that a 21:9
+// screen never enters any of it.
+inline constexpr double kUltrawideThreshold = 2.45;
+
+// The display aspect, recovered from the correction factor.
+//
+// k = (16/9) / aspect by construction, and k comes from the bar height the game
+// computes from its actual backbuffer -- so this is correct in windowed mode and
+// at non-native resolutions, where GetSystemMetrics is not.
+[[nodiscard]] inline double aspect_from_correction(double k) {
+    return k > 1e-6 ? kReferenceAspect / k : kReferenceAspect;
+}
 
 // Tangent-space scalar. NOTE: this multiplies tan(fov/2), never the angle.
 [[nodiscard]] inline double correction_factor(int width, int height) {
