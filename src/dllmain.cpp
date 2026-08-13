@@ -730,6 +730,9 @@ DWORD WINAPI worker(LPVOID) {
             // Cheap, and it settles the question about the intro's side bars.
             bars::verify();
             bars::poll_second_letterbox();
+            if (bars::side_bars()) {
+                bars::set_target_aspect(true);
+            }
 
             // Once, as soon as the aspect is known. On 21:9 the condition is
             // false and nothing here ever runs.

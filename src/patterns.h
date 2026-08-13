@@ -55,6 +55,22 @@ inline constexpr std::ptrdiff_t kBarFractionDisplay = 8;
 // first, so it is double buffered. Read the first.
 inline constexpr std::size_t kStride = 32;
 
+// float, 2.35 -- the aspect the letterbox aims for, and the input the bar height
+// is computed from:
+//
+//     bar(2.35) = (1 - min(x, 16/9) / target) * 0.5 * weight
+//
+// Set it to 16/9 and the expression is exactly zero: no top or bottom bars at
+// all, decided where the game decides it rather than patched afterwards.
+//
+// It looked like a constant when it was first read out of the dump, and it is
+// not: it comes from cameras.ymt, where `UNK_MEMBER_0xAE00384B` holds 2.35. The
+// "Remove Black Bars in Cutscenes" mod does nothing but change that entry to
+// 1.778, which is why it removes the top and bottom bars and leaves the sides
+// alone. rschi found it; it is the reason overwriting the computed bar height
+// never held, because the game recomputes it from this every frame.
+inline constexpr std::ptrdiff_t kTargetAspect = 0x38;
+
 }  // namespace letterbox
 
 // float GetFov()  ->  movss xmm0, [rip+disp32] ; ret

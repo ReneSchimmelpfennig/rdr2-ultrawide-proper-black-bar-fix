@@ -50,6 +50,11 @@ void set_side_bars(bool on);
 // exactly when ours is idle -- over the intro video, for one.
 void poll_second_letterbox();
 
+// Aims the letterbox at 16:9 instead of 2.35, which makes its computed bar
+// height exactly zero -- no top or bottom bars, decided where the game decides
+// it. Call every so often; it only writes when the value is not already right.
+void set_target_aspect(bool to_sixteen_nine);
+
 // Turns the bars off (patched) or back on (original). Safe to call repeatedly.
 bool set_hidden(bool hidden);
 

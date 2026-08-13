@@ -157,16 +157,11 @@ void draw_detour() {
             // barDisplay, and anything that does not change is drawn by neither
             // -- which would mean a second drawing path, the same suspicion the
             // intro's bars raised yesterday.
-            // The probe answered: 0.30 drew fat top and bottom bars, 0.05 thin
-            // side ones. So bar235 is top/bottom, barDisplay is left/right, both
-            // writes take effect, and the mapping was right all along.
-            //
-            // Which makes the original result contradictory: if 0.30 draws, then
-            // 0 must draw nothing, and yet the bars stayed. The only account
-            // that fits both is that the value gets replaced again between our
-            // write and the drawing -- so the write is read back afterwards
-            // instead of assumed.
-            write_float_at(bar235, 0.0f);
+            // Only the sides are set here now. The top and bottom are dealt with
+            // at their source instead -- see set_target_aspect -- because the
+            // game recomputes the bar height every frame from an input we can
+            // reach, and overwriting the output was always going to be a race we
+            // could only sometimes win.
             write_float_at(bar_display, ours);
 
             // How many times is the drawing called per frame? The weight is
@@ -214,6 +209,7 @@ namespace {
 // started.
 std::uintptr_t g_second_rect = 0;
 std::atomic<int> g_second_logged{0};
+std::atomic<int> g_target_logged{0};
 
 void find_second_letterbox(const std::vector<mem::NamedRegion>& sections) {
     const auto pattern = mem::parse_pattern(patterns::kSecondLetterbox);
@@ -291,6 +287,35 @@ void set_side_bars(bool on) {
 bool side_bars() { return g_side_bars.load(std::memory_order_relaxed); }
 
 void poll_second_letterbox() { log_second_letterbox(); }
+
+// Aim the letterbox at 16:9 so its bar height comes out as zero.
+//
+// bar(2.35) = (1 - min(x, 16/9) / target) * 0.5 * weight, so a target of 16/9
+// makes the whole expression zero and the game simply never draws top or bottom
+// bars. This is the same lever the "Remove Black Bars in Cutscenes" mod pulls,
+// except it edits cameras.ymt on disk and this writes the value the game loaded
+// from it.
+//
+// Re-asserted from the worker loop rather than written once, because nothing
+// here has yet established whether the game reloads it.
+void set_target_aspect(bool to_sixteen_nine) {
+    if (g_anchor == 0) {
+        return;
+    }
+    const std::uintptr_t address = g_anchor + patterns::letterbox::kTargetAspect;
+    const float wanted =
+        to_sixteen_nine ? static_cast<float>(framing::kReferenceAspect)
+                        : static_cast<float>(framing::kContentAspect);
+    const float now = read_float_at(address);
+    if (std::fabs(now - wanted) < 1e-4f) {
+        return;
+    }
+    write_float_at(address, wanted);
+    if (g_target_logged.fetch_add(1, std::memory_order_relaxed) < 4) {
+        logger::info("letterbox target aspect {:.5f} -> {:.5f} (top and bottom bars go to zero)",
+                     now, wanted);
+    }
+}
 
 void restore() {
     if (g_immediate != 0 && g_hidden) {
