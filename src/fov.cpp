@@ -426,6 +426,38 @@ bool is_our_own_output(float value) { return matches_something_we_wrote(value); 
 // never enters any of it. Reported once, from the same k the correction uses, so
 // there is no second measurement to disagree with the first.
 std::atomic<bool> g_aspect_reported{false};
+std::atomic<bool> g_clamp_reported{false};
+
+// One place where k is decided, used by both correction sites.
+//
+// They had grown a copy each of "read the bar height, invert it, fall back to
+// the screen size if that looks wrong", and a rule that has to be added to two
+// places is a rule that will eventually exist in one.
+double effective_k(float weight, std::uintptr_t bar_addr) {
+    float bar = 0.0f;
+    std::memcpy(&bar, reinterpret_cast<const void*>(bar_addr), sizeof(bar));
+
+    double k = framing::correction_factor_from_bars(bar, weight);
+    if (!(k > 0.0 && k < 1.0)) {
+        k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
+                                       GetSystemMetrics(SM_CYSCREEN));
+    }
+
+    // Wider than 21:9: stop the correction at the film frame. Narrower displays
+    // never enter this, so their behaviour is bit-for-bit what it was.
+    if (framing::aspect_from_correction(k) > framing::kUltrawideThreshold) {
+        const double clamped = framing::clamped_for_wide_display(k);
+        if (!g_clamp_reported.exchange(true, std::memory_order_relaxed)) {
+            logger::info("wide display: correction clamped at the {:.2f} film frame, "
+                         "k {:.6f} -> {:.6f}",
+                         framing::kContentAspect, k, clamped);
+            logger::info("  the picture keeps its full height; what lies beyond the frame is");
+            logger::info("  covered by bars or shown, depending on ExpandCutscenesSideways");
+        }
+        k = clamped;
+    }
+    return k;
+}
 
 void report_aspect_once(double k) {
     if (g_aspect_reported.exchange(true, std::memory_order_relaxed)) {
@@ -958,12 +990,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             // k straight from the game's own bar height: it already divides by
             // the true backbuffer aspect, so this is correct in windowed mode
             // and at non-native resolutions without asking Windows.
-            const float bar = read_float(g_bar_addr);
-            double k = framing::correction_factor_from_bars(bar, weight);
-            if (!(k > 0.0 && k < 1.0)) {
-                k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
-                                               GetSystemMetrics(SM_CYSCREEN));
-            }
+            const double k = effective_k(weight, g_bar_addr);
             report_aspect_once(k);
             // Strength scales how far k moves away from 1, still in tangent
             // space, so the blend with the letterbox weight stays intact.
@@ -1186,12 +1213,7 @@ void clamp_detour(std::uintptr_t camera) {
 
         if (w > 0.0f && !is_our_own_output(before) && before > patterns::kFovSanityMin &&
             before < patterns::kFovSanityMax) {
-            const float bar = read_float(g_bar_addr);
-            double k = framing::correction_factor_from_bars(bar, w);
-            if (!(k > 0.0 && k < 1.0)) {
-                k = framing::correction_factor(GetSystemMetrics(SM_CXSCREEN),
-                                               GetSystemMetrics(SM_CYSCREEN));
-            }
+            const double k = effective_k(w, g_bar_addr);
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
             const double factor = framing::blended_factor(scaled, w);
             float corrected = static_cast<float>(framing::corrected_vfov_deg(before, factor));

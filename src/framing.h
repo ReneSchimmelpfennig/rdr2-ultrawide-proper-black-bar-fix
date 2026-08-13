@@ -36,6 +36,32 @@ inline constexpr double kMaxCorrectedAspect = 2.4;
 // screen never enters any of it.
 inline constexpr double kUltrawideThreshold = 2.45;
 
+// The aspect the cutscene is actually composed in.
+//
+// The game letterboxes a 16:9 window down to this, and its own constant for the
+// bar height -- 0.121749 = (1 - (16/9)/2.35)/2 -- is derived from it. So 2.35 is
+// the film frame, and correcting past it cannot reveal more of the shot; it can
+// only crop the top and bottom off a frame that is already full width.
+//
+// This is why 21:9 works so well: 2.3889 is almost exactly 2.35, so filling the
+// screen costs 1.7% and nothing else. It is also why nothing wider is free.
+inline constexpr double kContentAspect = 2.35;
+
+// Correction for displays wider than the film frame.
+//
+// Beyond 2.35 the choice is to crop the picture vertically or to show more of
+// the scene sideways, and cropping the composition is the one thing this project
+// exists to avoid. So the correction stops at the film frame: the height is
+// preserved exactly, and what lies beyond it is somebody else's problem -- with
+// ExpandCutscenesSideways = false it gets covered by black bars, with true it
+// stays visible.
+//
+// Only ever called when the display is wider than kUltrawideThreshold.
+[[nodiscard]] inline double clamped_for_wide_display(double k) {
+    const double aspect = k > 1e-6 ? kReferenceAspect / k : kReferenceAspect;
+    return kReferenceAspect / std::min(aspect, kContentAspect);
+}
+
 // The display aspect, recovered from the correction factor.
 //
 // k = (16/9) / aspect by construction, and k comes from the bar height the game
