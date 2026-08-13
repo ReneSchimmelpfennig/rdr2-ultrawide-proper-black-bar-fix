@@ -401,6 +401,42 @@ void remember_our_output(float value) {
 // rounding it is supposed to be checked against.
 constexpr float kOursTolerance = 1e-5f;
 
+// What the ring cannot tell apart, and what can.
+//
+// The ring has to match across structures: its job is to recognise our own
+// output when the game hands it to a *different* camera state as input, which is
+// what compounded into a threefold zoom the last time it was missing. So it
+// cannot be replaced by a per-camera test -- that would bring the compounding
+// back, and that one is visible as a picture that is too close.
+//
+// But the two cases the ring confuses are distinguishable, just not by the value
+// alone:
+//
+//   copied from another structure -- the value *changed* to ours, because the
+//                                    game propagated it this frame
+//   an authored value that collides -- the value did not change; it is what this
+//                                    camera has been carrying all along
+//
+// Nothing copies a value that is already there. So a value that equals this
+// structure's own previous input is authored, whatever the ring says about it,
+// and the 5e-6 coincidence that caused the flash resolves the right way: the
+// cutscene camera's authored 39.3141 was 39.3141 the frame before too, while our
+// 39.3139 had just arrived at the gameplay camera.
+//
+// The one case this cannot separate is a camera whose authored value moves every
+// frame *and* lands inside 1e-5 of one of our outputs. That is the present
+// behaviour, so it is not a regression, and it is far less likely than the case
+// this removes.
+constexpr bool kIdentityTest = true;
+
+// The input this structure carried on the call before, maintained for every
+// slot on every call -- unlike g_dst_last_in, which only tracks the rendered
+// camera at weight and exists for the CUT log.
+std::atomic<float> g_dst_prev_in[kMaxDestinations]{};
+
+// What we ourselves last wrote into each slot. The positive half of the test.
+std::atomic<float> g_dst_last_ours[kMaxDestinations]{};
+
 bool matches_something_we_wrote(float value) {
     for (std::size_t i = 0; i < kOutputRing; ++i) {
         const std::uint32_t bits = g_our_outputs[i].load(std::memory_order_relaxed);
@@ -417,6 +453,72 @@ bool matches_something_we_wrote(float value) {
 }
 
 bool is_our_own_output(float value) { return matches_something_we_wrote(value); }
+
+// Same question, but knowing which object is asking.
+//
+// `previous_input` is what this object carried on the call before, `our_last` the
+// value we ourselves last wrote into it. The order of the two tests is the whole
+// design:
+//
+//   our_last first, and it wins. If we put this value here, it is ours no matter
+//   how long it has sat unchanged. Without this, the rule below eats its own
+//   output -- a value we wrote, arriving unchanged on the next call, would read
+//   as authored and be corrected a second time. That is the compounding fault,
+//   the one that shows up as a picture too close, and it is worth more care than
+//   the flash it would be fixing.
+//
+//   previous_input second. Unchanged and not ours: nothing propagated it here,
+//   so it is this camera's own authored value and the ring matched by
+//   coincidence. That is the flash.
+//
+// Both compared with the ring's tolerance, and for the ring's reason: the value
+// makes a round trip through focal length and comes back rounded.
+std::atomic<unsigned long long> g_identity_saves{0};
+
+// The same "what did this object carry last time" memory for the focal-length
+// clamp, which works on its own camera objects rather than on the destinations
+// ApplyCameraState sees. Two of them in a session, so four entries and a linear
+// scan; a new object simply takes the oldest seat.
+constexpr std::size_t kClampObjects = 4;
+std::atomic<std::uintptr_t> g_clamp_obj[kClampObjects]{};
+std::atomic<float> g_clamp_prev_in[kClampObjects]{};
+std::atomic<float> g_clamp_last_ours[kClampObjects]{};
+std::atomic<std::size_t> g_clamp_next{0};
+
+std::size_t clamp_seat(std::uintptr_t camera) {
+    for (std::size_t i = 0; i < kClampObjects; ++i) {
+        if (g_clamp_obj[i].load(std::memory_order_relaxed) == camera) {
+            return i;
+        }
+    }
+    const std::size_t index = g_clamp_next.fetch_add(1, std::memory_order_relaxed) % kClampObjects;
+    g_clamp_obj[index].store(camera, std::memory_order_relaxed);
+    g_clamp_prev_in[index].store(0.0f, std::memory_order_relaxed);
+    g_clamp_last_ours[index].store(0.0f, std::memory_order_relaxed);
+    return index;
+}
+
+bool near_enough(float a, float b) { return std::fabs(a - b) <= std::fabs(a) * kOursTolerance; }
+
+bool is_our_own_output_for(float value, float previous_input, float our_last) {
+    if (!matches_something_we_wrote(value)) {
+        return false;
+    }
+    if (!kIdentityTest) {
+        return true;
+    }
+    if (our_last != 0.0f && near_enough(value, our_last)) {
+        return true;
+    }
+    if (previous_input != 0.0f && near_enough(value, previous_input)) {
+        // Unchanged since the last call and not something we put there: this
+        // camera's own authored value, and the ring matched by coincidence.
+        // This is the flash, caught.
+        g_identity_saves.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
 
 // Step one of the wider-than-21:9 work: say which side of the line this display
 // is on, and change nothing.
@@ -602,6 +704,8 @@ std::size_t record_destination(std::uintptr_t dst) {
         g_dst_shader_hits[slot].store(0, std::memory_order_relaxed);
         g_dst_shader_samples[slot].store(0, std::memory_order_relaxed);
         g_dst_last_final[slot].store(0.0f, std::memory_order_relaxed);
+        g_dst_prev_in[slot].store(0.0f, std::memory_order_relaxed);
+        g_dst_last_ours[slot].store(0.0f, std::memory_order_relaxed);
         if (g_render_slot.load(std::memory_order_relaxed) == slot) {
             g_render_slot.store(static_cast<std::size_t>(-1), std::memory_order_relaxed);
         }
@@ -632,6 +736,15 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // one that ends up rendered may be corrected -- see the shader scoring below.
     const std::size_t slot = record_destination(dst);
     const float original = read_float(fov_addr);
+
+    // Read before writing: this is what the structure carried last time, and the
+    // identity test below needs it before it is overwritten with this call's
+    // value. Every call, every slot, whatever the decision turns out to be --
+    // an authored value that is only recorded on some paths is exactly the hole
+    // g_dst_last_final fell into.
+    const float previous_input =
+        (slot != kNoSlot) ? g_dst_prev_in[slot].exchange(original, std::memory_order_relaxed)
+                          : 0.0f;
 
     // Is *this* destination the one being rendered right now?
     //
@@ -910,7 +1023,10 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         finish(original, "skip-not");
         return;
     }
-    if (is_our_own_output(original)) {
+    if (is_our_own_output_for(original, previous_input,
+                              slot != kNoSlot
+                                  ? g_dst_last_ours[slot].load(std::memory_order_relaxed)
+                                  : 0.0f)) {
         finish(original, "skip-own");
         return;
     }
@@ -1030,6 +1146,9 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // Only corrections go into the ring. That is the whole point of it: it has
     // to hold what we wrote, not what the game wrote.
     remember_our_output(result);
+    if (slot != kNoSlot) {
+        g_dst_last_ours[slot].store(result, std::memory_order_relaxed);
+    }
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
 
     // The address a correction actually landed in. This is what the read
@@ -1172,6 +1291,7 @@ Config read_config() {
 // limits keep working for every camera we are not correcting.
 void clamp_detour(std::uintptr_t camera) {
     float before = 0.0f;
+    bool ours = false;
     const bool readable = camera != 0;
     if (readable) {
         std::memcpy(&before, reinterpret_cast<const void*>(camera + patterns::kFocalClampFov),
@@ -1213,12 +1333,20 @@ void clamp_detour(std::uintptr_t camera) {
         float w = 0.0f;
         std::memcpy(&w, reinterpret_cast<const void*>(g_weight_addr), sizeof(w));
 
+        // The census counted exactly two camera objects here in a whole session,
+        // against sixty-odd in ApplyCameraState, so four seats is generous.
+        const std::size_t seat = clamp_seat(camera);
+        const float previous_input = g_clamp_prev_in[seat].exchange(before,
+                                                                    std::memory_order_relaxed);
+        const float our_last = g_clamp_last_ours[seat].load(std::memory_order_relaxed);
+        const bool already_ours = is_our_own_output_for(before, previous_input, our_last);
+
         if (g_clamp_census.fetch_add(1, std::memory_order_relaxed) < 400 && w > 0.0f) {
             logger::info("CLAMP w {:.4f}  cam 0x{:012X}  fov {:8.4f}{}", w, camera, before,
-                         is_our_own_output(before) ? "  (already ours)" : "");
+                         already_ours ? "  (already ours)" : "");
         }
 
-        if (w > 0.0f && !is_our_own_output(before) && before > patterns::kFovSanityMin &&
+        if (w > 0.0f && !already_ours && before > patterns::kFovSanityMin &&
             before < patterns::kFovSanityMax) {
             const double k = effective_k(w, g_bar_addr);
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
@@ -1226,15 +1354,24 @@ void clamp_detour(std::uintptr_t camera) {
             float corrected = static_cast<float>(framing::corrected_vfov_deg(before, factor));
             corrected = tag(corrected);
             remember_our_output(corrected);
+            g_clamp_last_ours[seat].store(corrected, std::memory_order_relaxed);
             std::memcpy(reinterpret_cast<void*>(camera + patterns::kFocalClampFov), &corrected,
                         sizeof(corrected));
             before = corrected;  // so the clamp guard below compares against ours
+            ours = true;
+        } else {
+            ours = already_ours;
         }
     }
 
     g_clamp_original(camera);
 
-    if (!readable || !is_our_own_output(before)) {
+    // Whether the value is ours is now known outright rather than asked of the
+    // ring again. The ring answered "is this value one we ever wrote", which on a
+    // camera we deliberately left alone could be yes by coincidence -- the same
+    // collision as the flash, in the one place where it would make us fight the
+    // game's own lens limits.
+    if (!readable || !ours) {
         return;
     }
     float after = 0.0f;
@@ -1525,6 +1662,8 @@ unsigned long long focal_clamp_reverts() { return g_clamp_reverts.load(); }
 
 double display_aspect() { return g_display_aspect.load(std::memory_order_relaxed); }
 
+
+unsigned long long identity_saves() { return g_identity_saves.load(std::memory_order_relaxed); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();

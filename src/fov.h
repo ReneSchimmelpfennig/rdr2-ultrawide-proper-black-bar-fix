@@ -126,4 +126,13 @@ void set_once_per_frame(bool on);
 // -- only one of them can be the one the projection reads.
 void report_destinations(std::uintptr_t module_base);
 
+// How many times the identity test overruled the ring.
+//
+// Each one is a frame that would have gone out uncorrected: the ring recognised
+// an authored value as ours by coincidence, and knowing which camera was asking
+// caught it. Reported next to the MISS count, because together they say whether
+// the flash is gone or merely moved -- a number here that rises while MISS stays
+// put would mean the test is firing on the wrong cases.
+[[nodiscard]] unsigned long long identity_saves();
+
 }  // namespace fov
