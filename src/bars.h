@@ -55,6 +55,19 @@ void poll_second_letterbox();
 // it. Call every so often; it only writes when the value is not already right.
 void set_target_aspect(bool to_sixteen_nine);
 
+// Reads the whole letterbox state while the full-screen overlay is on screen,
+// and re-asserts the target aspect there.
+//
+// Top and bottom bars are gone everywhere except for the duration of that
+// overlay, and the worker loop has never once managed to sample the letterbox at
+// that moment -- the second letterbox read zero every single time. The overlay's
+// own hook runs exactly then, so it is the only place from which the question
+// can be asked: is the target still ours, is bar(2.35) really zero, and is the
+// second letterbox drawing something after all?
+//
+// Does nothing unless the side bars are on, so 21:9 never reaches it.
+void probe_during_overlay();
+
 // Turns the bars off (patched) or back on (original). Safe to call repeatedly.
 bool set_hidden(bool hidden);
 

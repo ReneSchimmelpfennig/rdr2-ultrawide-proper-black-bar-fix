@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstring>
 
+#include "bars.h"
 #include "fov.h"
 #include "framing.h"
 #include "log.h"
@@ -73,6 +74,9 @@ void record(std::uintptr_t ret, float size_in, float pos_in, float size_out, flo
 
 void __fastcall detour(float* size, float* pos) {
     g_calls.fetch_add(1, std::memory_order_relaxed);
+    // The one hook that runs while the full-screen overlay is up, which is the
+    // only stretch where top and bottom bars are still showing.
+    bars::probe_during_overlay();
     const auto ret = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
 
     const float size_in = size != nullptr ? *size : 0.0f;

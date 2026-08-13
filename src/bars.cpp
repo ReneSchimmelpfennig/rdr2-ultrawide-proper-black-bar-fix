@@ -232,6 +232,7 @@ namespace {
 std::uintptr_t g_second_rect = 0;
 std::atomic<int> g_second_logged{0};
 std::atomic<int> g_target_logged{0};
+std::atomic<int> g_overlay_logged{0};
 
 void find_second_letterbox(const std::vector<mem::NamedRegion>& sections) {
     const auto pattern = mem::parse_pattern(patterns::kSecondLetterbox);
@@ -350,6 +351,35 @@ void poll_second_letterbox() { log_second_letterbox(); }
 // Re-asserted from the worker loop rather than written once, because nothing
 // here has yet established whether the game reloads it.
 void set_target_aspect(bool to_sixteen_nine) { set_target_aspect_impl(to_sixteen_nine); }
+
+void probe_during_overlay() {
+    if (!g_side_bars.load(std::memory_order_relaxed) || g_anchor == 0) {
+        return;
+    }
+
+    const float target = read_float_at(g_anchor + patterns::letterbox::kTargetAspect);
+    const float weight = read_float_at(g_anchor + patterns::letterbox::kWeight);
+    const float bar235 = read_float_at(g_anchor + patterns::kDrawnBar235);
+    const float sides = read_float_at(g_anchor + patterns::kDrawnBarDisplay);
+
+    const int nth = g_overlay_logged.fetch_add(1, std::memory_order_relaxed);
+    if (nth < 8 || nth % 300 == 0) {
+        logger::info("overlay probe: target {:.5f}  weight {:.4f}  top/bottom {:.6f}  sides {:.6f}",
+                     target, weight, bar235, sides);
+        if (g_second_rect != 0) {
+            logger::info("overlay probe:   second letterbox {:.6f} {:.6f} {:.6f} {:.6f}",
+                         read_float_at(g_second_rect), read_float_at(g_second_rect + 4),
+                         read_float_at(g_second_rect + 8), read_float_at(g_second_rect + 12));
+        }
+    }
+
+    // Also a guess at the fix, and labelled as one: if the target has been
+    // reloaded for the overlay and our update hook does not run during it, this
+    // puts it back and the bars go from the next frame onwards. If the log above
+    // shows the target already at 1.778, the guess was wrong and the bars come
+    // from elsewhere.
+    set_target_aspect_impl(true);
+}
 
 namespace {
 
