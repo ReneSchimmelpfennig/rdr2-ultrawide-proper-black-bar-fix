@@ -303,9 +303,26 @@ void set_target_aspect(bool to_sixteen_nine) {
         return;
     }
     const std::uintptr_t address = g_anchor + patterns::letterbox::kTargetAspect;
-    const float wanted =
-        to_sixteen_nine ? static_cast<float>(framing::kReferenceAspect)
-                        : static_cast<float>(framing::kContentAspect);
+    // 1.778, not 16/9 = 1.777778, and the difference is the whole point.
+    //
+    // The letterbox update ends with a guard we recorded days ago and I walked
+    // straight into anyway:
+    //
+    //     if (weight > 1e-06) {
+    //         if (bar(2.35)    == 0.0) bar(2.35)    = 1.0;
+    //         if (bar(display) == 0.0) bar(display) = 1.0;
+    //     }
+    //
+    // A bar of exactly zero is replaced by a bar covering the whole screen. Aim
+    // the letterbox at precisely 16/9 and the computed height is exactly zero,
+    // so the picture goes black -- which is what happened.
+    //
+    // A target a hair above 16/9 gives (1 - 1.777778/1.778) * 0.5 = 6.25e-5,
+    // which is 0.09 px at 1440 and therefore invisible, while staying safely
+    // clear of the guard. That is why the cameras.ymt mod uses this number.
+    constexpr float kJustAbove16by9 = 1.778f;
+    const float wanted = to_sixteen_nine ? kJustAbove16by9
+                                         : static_cast<float>(framing::kContentAspect);
     const float now = read_float_at(address);
     if (std::fabs(now - wanted) < 1e-4f) {
         return;
