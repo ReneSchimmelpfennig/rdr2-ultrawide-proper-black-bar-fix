@@ -251,6 +251,37 @@ inline constexpr std::ptrdiff_t kDrawnBar235 = letterbox::kStride + letterbox::k
 inline constexpr std::ptrdiff_t kDrawnBarDisplay =
     letterbox::kStride + letterbox::kBarFractionDisplay;
 
+// The second letterbox.
+//
+// Established by elimination: our zero survives the drawing we hook -- read back
+// after the call, still zero -- and that function runs once per frame, so the
+// bars that remain at the top and bottom of a 32:9 screen are drawn by somebody
+// else. Searching the image for calls to the rectangle drawer found ten, four of
+// them ours, and a cluster of three in a function at +0xEE3C2F that takes its
+// geometry from an entirely different place.
+//
+// It reads four consecutive floats:
+//
+//     movss xmm0, [rip+..]   -> +0x4A5CEA8
+//     movss xmm3, [rip+..]   -> +0x4A5CEB4
+//     movss xmm2, [rip+..]   -> +0x4A5CEB0
+//     movss xmm1, [rip+..]   -> +0x4A5CEAC
+//
+// which is a rectangle, four floats from the same base. Nothing to do with the
+// letterbox struct at +0x39751B4 that the rest of this plugin works with. Very
+// likely also what puts bars over the intro video -- the ones that stayed on
+// after it and then vanished in a single frame.
+//
+// The signature is anchored on the test that precedes the loads, because the
+// four loads on their own match four times. 36 bytes, displacements wildcarded.
+inline constexpr std::string_view kSecondLetterbox =
+    "F6 43 39 01 F3 0F 10 05 ? ? ? ? F3 0F 10 1D ? ? ? ? F3 0F 10 15 ? ? ? ? F3 0F 10 0D ? ? ? ?";
+
+// Within the match: the first movss starts at +4 and is 8 bytes long, so its
+// target is match + 12 + disp32. The other three floats follow it.
+inline constexpr std::size_t kSecondLetterboxDispOffset = 8;
+inline constexpr std::size_t kSecondLetterboxInsnEnd = 12;
+
 // A function prologue, also taken from RDR2NoBlackBars.asi. Purpose still
 // unconfirmed; resolves to exactly one address on this build.
 inline constexpr std::string_view kUnknownPrologue =

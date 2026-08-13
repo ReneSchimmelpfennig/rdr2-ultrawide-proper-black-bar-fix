@@ -104,6 +104,8 @@ float read_float_at(std::uintptr_t address) {
     return value;
 }
 
+void log_second_letterbox();
+
 void write_float_at(std::uintptr_t address, float value) {
     std::memcpy(reinterpret_cast<void*>(address), &value, sizeof(value));
 }
@@ -182,6 +184,8 @@ void draw_detour() {
             }
         }
     }
+    log_second_letterbox();
+
     g_draw_original();
 
     // Did what we wrote survive the drawing?
@@ -201,6 +205,49 @@ void draw_detour() {
                          now235, nowDisplay);
         }
     }
+}
+
+}  // namespace
+
+namespace {
+
+// Where the second letterbox keeps its rectangle. Located, watched, not yet
+// touched: writing into four unknown floats is how the last three mistakes
+// started.
+std::uintptr_t g_second_rect = 0;
+std::atomic<int> g_second_logged{0};
+
+void find_second_letterbox(const std::vector<mem::NamedRegion>& sections) {
+    const auto pattern = mem::parse_pattern(patterns::kSecondLetterbox);
+    if (!pattern) {
+        return;
+    }
+    std::vector<std::uintptr_t> hits;
+    for (const auto& [name, region] : sections) {
+        mem::find_all(region, *pattern, hits);
+    }
+    if (hits.size() != 1) {
+        logger::info("second letterbox: signature matched {} time(s), need 1", hits.size());
+        return;
+    }
+    g_second_rect = mem::resolve_rip_relative(hits.front() + 4, patterns::kSecondLetterboxDispOffset - 4,
+                                              patterns::kSecondLetterboxInsnEnd - 4);
+    logger::info("second letterbox: found, rectangle at 0x{:016X}", g_second_rect);
+}
+
+void log_second_letterbox() {
+    if (g_second_rect == 0 || g_second_logged.load(std::memory_order_relaxed) >= 10) {
+        return;
+    }
+    const float a = read_float_at(g_second_rect);
+    const float b = read_float_at(g_second_rect + 4);
+    const float c = read_float_at(g_second_rect + 8);
+    const float d = read_float_at(g_second_rect + 12);
+    if (a == 0.0f && b == 0.0f && c == 0.0f && d == 0.0f) {
+        return;  // nothing being drawn by it right now
+    }
+    g_second_logged.fetch_add(1, std::memory_order_relaxed);
+    logger::info("second letterbox: rect {:.6f} {:.6f} {:.6f} {:.6f}", a, b, c, d);
 }
 
 }  // namespace
@@ -234,6 +281,7 @@ bool init_side_bars(const std::vector<mem::NamedRegion>& sections, std::uintptr_
         return false;
     }
     logger::info("side bars: drawing hooked at 0x{:016X}", hits.front());
+    find_second_letterbox(sections);
     return true;
 }
 
