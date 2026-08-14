@@ -452,12 +452,17 @@ void remember_our_output(float value, int slot) {
 // At 1e-5 that falls outside the window, is not recognised as ours, and gets
 // corrected a second time. On screen: 39.32 one frame, 29.78 the next.
 //
-// 1e-4 covers the measured 4.8e-5 with room to spare and is still three orders
-// of magnitude below the thing it must never match -- an authored value sits
-// 0.3 relative away from its corrected form, not 1e-4. It is also five times
-// tighter than the 5e-4 that failed years ago, and that one ran against 512 ring
-// entries rather than 32.
-constexpr float kOursTolerance = 1e-4f;
+// AND PUT BACK. 1e-4 was tried on that reasoning and made things worse: the jump
+// stayed *and* the sustained one returned, which the ramping-only clamp had
+// removed. So at 1e-4 the window swallows values that genuinely need correcting,
+// and the double correction measured above is not the only thing living in that
+// range.
+//
+// Both numbers therefore stand as they were. What the experiment did establish
+// is that the second correction cannot be fixed by widening the window -- there
+// is no width that catches our blended value without also catching something
+// that must not be caught.
+constexpr float kOursTolerance = 1e-5f;
 
 // What the ring cannot tell apart, and what can.
 //
@@ -686,11 +691,8 @@ void remember_authored(float value) {
 // Five times the ring's tolerance: close enough to be confused, and the value
 // has to clear all of it plus the rounding.
 constexpr float kConfusable = 5.0f * kOursTolerance;
-// Raised with the tolerance it has to clear. 0.004 was ten times the old 1e-5
-// window; against 1e-4 it would sit right on the edge and separate nothing.
-// 0.02 deg on 39 is 5e-4 relative -- five times outside, and still far below
-// anything visible.
-constexpr float kSeparation = 0.02f;
+// Back to 0.004 with the tolerance it belongs to: ten times the 1e-5 window.
+constexpr float kSeparation = 0.004f;
 
 // Always, not only against values already known.
 //
