@@ -593,6 +593,24 @@ double ticks_to_ms(long long span) {
 // every frame and holds at most a handful of entries, so 1e-3 cannot reach
 // anything but our own output: an authored value sits 0.3 relative from its
 // correction, three hundred times further out.
+// OFF, after three measurements that trade one artefact for another:
+//
+//   per structure only      cutscene flashes briefly   cinematic camera fine
+//   per frame, any weight   cutscene fixed             cinematic camera flickers
+//   per frame, settled only both flicker
+//
+// The middle row is the tempting one, but the manual cinematic camera is used in
+// ordinary play and the cutscene is one scene, so the version with no regression
+// wins. Restricting the rule to settled scenes helped neither, which says the
+// two regimes are not separable by weight here -- unlike the focal clamp, where
+// that same split worked.
+//
+// Kept whole, with the log lines that motivated it, because the diagnosis behind
+// it stands: the same camera really is corrected twice in one frame, in two
+// different structures. What is missing is a way to tell which of the two writes
+// the game will render, and that is not a value question either.
+constexpr bool kFrameOutputRule = false;
+
 constexpr std::size_t kFrameOutputs = 8;
 constexpr float kSameFrameOurs = 1e-3f;
 std::atomic<float> g_frame_outputs[kFrameOutputs]{};
@@ -1710,7 +1728,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // manual cinematic camera in free roam flickered consistently right
         // after its cut with this rule running through the ramp, which is what
         // that looks like from the outside.
-        if (weight >= kSettledWeight && written_this_frame(original)) {
+        if (kFrameOutputRule && written_this_frame(original)) {
             g_second_writes.fetch_add(1, std::memory_order_relaxed);
             finish(original, "skip-2nd");
             return;
