@@ -1412,13 +1412,29 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         }
         if (g_flip_budget.load(std::memory_order_relaxed) > 0) {
             g_flip_budget.fetch_sub(1, std::memory_order_relaxed);
+            // src and the stack flag are the two structural facts we have never
+            // looked at, and after five failed value-based attempts they are the
+            // only ones left that are not a comparison of floats.
+            //
+            // The addresses already hint at it: slot 25 and 31 live at
+            // 0x0000_00xx_..., which the EVICT lines confirm as thread stacks,
+            // while the others are heap. In the frame that flickered, the
+            // authored value went to a heap structure and our own value came
+            // back into the stack temporary. If the game copies the camera onto
+            // the stack right before rendering, "stack or heap" is exactly the
+            // discriminator that has been missing.
+            //
+            // And src has been in the hook's signature since the first day
+            // without ever being logged.
             logger::info(
-                "FLIP  {:<8} slot {:<3} dst 0x{:012X}  w {:.4f}  in {:9.4f}  prev {:9.4f}"
-                "  shader {:9.4f}  -> {:9.4f}   rendered {}  render-slot {}  frame-slot {}",
-                decision, slot == kNoSlot ? -1 : static_cast<int>(slot), dst, weight, original,
-                previous_now, shader_now, final_value, is_rendered ? "yes" : "no ",
-                static_cast<int>(g_render_slot.load(std::memory_order_relaxed)),
-                static_cast<int>(g_frame_slot.load(std::memory_order_relaxed)));
+                "FLIP  {:<8} slot {:<3} dst 0x{:012X} {}  src 0x{:012X} {}  w {:.4f}"
+                "  in {:9.4f}  prev {:9.4f}  shader {:9.4f}  -> {:9.4f}   rendered {}"
+                "  render-slot {}",
+                decision, slot == kNoSlot ? -1 : static_cast<int>(slot), dst,
+                is_stack_address(dst) ? "stk" : "hea", src,
+                is_stack_address(src) ? "stk" : "hea", weight, original, previous_now, shader_now,
+                final_value, is_rendered ? "yes" : "no ",
+                static_cast<int>(g_render_slot.load(std::memory_order_relaxed)));
         }
 
         // Where is the cut, relative to the bar weight? See kCutThreshold.
