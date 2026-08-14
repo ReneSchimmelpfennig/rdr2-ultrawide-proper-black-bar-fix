@@ -914,6 +914,10 @@ constexpr int kFlipTrace = 600;
 std::atomic<float> g_flip_last_shader{0.0f};
 std::atomic<int> g_flip_budget{0};
 
+// The whole ramp, recorded from its first frame rather than from the symptom.
+constexpr int kRampTrace = 2400;
+std::atomic<int> g_ramp_trace{0};
+
 // Some destinations are temporaries on the stack -- the log shows addresses in
 // the thread stack range receiving two different camera values in the same
 // frame. Stack addresses get reused, so without eviction the table fills up with
@@ -1109,7 +1113,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
             if (weight > 0.0f && previous_weight <= 0.0f) {
                 g_screen_lines.store(0, std::memory_order_relaxed);
                 g_last_screen.store(0.0f, std::memory_order_relaxed);
-                logger::info("--- cutscene begins, screen trace reset ---");
+                g_ramp_trace.store(kRampTrace, std::memory_order_relaxed);
+                logger::info("--- cutscene begins, screen and ramp traces reset ---");
             }
         }
 
@@ -1193,11 +1198,27 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // every call is logged for a while, both the corrected and the skipped,
         // with everything that feeds the decision. Two consecutive frames of one
         // flip, side by side, is the measurement that has been missing.
-        if (weight >= kSettledWeight && shader_now != 0.0f) {
+        if (weight > 0.0f && shader_now != 0.0f) {
             const float last = g_flip_last_shader.exchange(shader_now, std::memory_order_relaxed);
             if (last != 0.0f && std::fabs(shader_now - last) > 1.0f) {
                 g_flip_budget.store(kFlipTrace, std::memory_order_relaxed);
             }
+        }
+
+        // The remaining jump sits inside the ramp, so arming on the symptom is
+        // not enough: by the time the picture swings, the cause is already a few
+        // frames back. A ramp lasts about 1.3 s, so recording all of it costs
+        // roughly two thousand lines and buys the frames *before* the jump --
+        // which is where every diagnosis so far had to guess.
+        //
+        // Reset at each cutscene boundary, for the reason the screen trace is:
+        // reaching the interesting scene takes minutes of riding, and without a
+        // reset the budget is gone before it starts.
+        if (weight > 0.0f && weight < kSettledWeight &&
+            g_ramp_trace.load(std::memory_order_relaxed) > 0) {
+            g_ramp_trace.fetch_sub(1, std::memory_order_relaxed);
+            g_flip_budget.store(std::max(g_flip_budget.load(std::memory_order_relaxed), 1),
+                                std::memory_order_relaxed);
         }
         if (g_flip_budget.load(std::memory_order_relaxed) > 0) {
             g_flip_budget.fetch_sub(1, std::memory_order_relaxed);
