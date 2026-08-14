@@ -123,21 +123,27 @@ std::atomic<unsigned> g_clamp_census{0};
 // Correct inside the focal-length clamp as well as in ApplyCameraState. See the
 // long note in clamp_detour. The failure mode is a picture that is too narrow.
 //
-// OFF, as an experiment with a measured reason behind it. This site's correction
-// is what writes 39.3141 into the ring every frame -- proven by the RINGHIT
-// provenance -- and that value is the cutscene camera's authored field of view,
-// which ApplyCameraState then skips as ours. Both visible faults in that scene
-// come from that skip.
+// Back on, but only while the bars are moving. Both halves of that were
+// measured, one after the other.
 //
-// Hiding the clamp's writes from ApplyCameraState was tried first and produced a
-// picture that was too close: the value flows back, so the ring has to stay
-// shared. That leaves not producing the value at all.
+// Off entirely: the second jump in the problem cutscene disappeared and the
+// width stayed right, which confirms this site's correction as the source of the
+// poisoning ring entry -- it writes 39.3141 every frame, and that is the
+// cutscene camera's authored field of view, which ApplyCameraState then skips as
+// ours. But the manual cinematic camera in free roam then took a visible moment
+// to reach our value, because reaching a camera a frame before ApplyCameraState
+// can is exactly what this site is for.
 //
-// What it gives up: this site corrects a camera one frame earlier than
-// ApplyCameraState can, which is what removed the judder at cuts. The defence
-// afterwards -- restoring our value when the game's focal limiting moves it --
-// keeps running regardless; only the correcting write is gated.
-constexpr bool kCorrectInClamp = false;
+// The two live at different weights, and that is the whole opening. The
+// poisoning was logged at w = 1.0000, settled, long after any transition. The
+// cinematic camera needs the early correction *during* a ramp. So the correction
+// runs while the weight is still moving and stops once the scene has settled,
+// where ApplyCameraState alone has been sufficient all along.
+//
+// Hiding the writes instead was tried first and made the picture too close: the
+// clamp's value flows back into camera states, so the ring has to stay shared.
+constexpr bool kCorrectInClamp = true;
+constexpr bool kClampCorrectsOnlyWhileRamping = true;
 
 // TRIED AND REVERTED. Correcting every camera state in an established cutscene
 // compounds, exactly as the original design did, and the ring did not prevent
@@ -1715,7 +1721,10 @@ void clamp_detour(std::uintptr_t camera) {
 
         ours = already_ours;
 
-        if (kCorrectInClamp && w > 0.0f && !already_ours && before > patterns::kFovSanityMin &&
+        const bool ramping = w > 0.0f && w < kSettledWeight;
+        const bool may_correct = kCorrectInClamp && (ramping || !kClampCorrectsOnlyWhileRamping);
+
+        if (may_correct && w > 0.0f && !already_ours && before > patterns::kFovSanityMin &&
             before < patterns::kFovSanityMax) {
             const double k = effective_k(w, g_bar_addr);
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
