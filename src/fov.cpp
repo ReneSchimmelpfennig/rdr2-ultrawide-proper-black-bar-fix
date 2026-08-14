@@ -437,7 +437,27 @@ void remember_our_output(float value, int slot) {
 //
 // The tag is gone from the test for the same reason: it cannot survive the
 // rounding it is supposed to be checked against.
-constexpr float kOursTolerance = 1e-5f;
+// RAISED to 1e-4 on measurement, and this is the number the remaining jump was
+// hiding behind.
+//
+// The ramp trace caught the rendered camera being written twice in one frame and
+// corrected both times:
+//
+//   FLIP CORRECT slot 25  in 51.2820 -> 39.3190     authored, correct
+//   FLIP CORRECT slot 25  in 39.3174 -> 29.7796     our own value, again
+//
+// We wrote 39.3190; what came back was 39.3174, then 39.3185, 39.3184, 39.3182,
+// 39.3180, 39.3177, 39.3171. The game does not hand our value back unchanged --
+// it blends it, and the difference reaches 0.0019, which is 4.8e-5 relative.
+// At 1e-5 that falls outside the window, is not recognised as ours, and gets
+// corrected a second time. On screen: 39.32 one frame, 29.78 the next.
+//
+// 1e-4 covers the measured 4.8e-5 with room to spare and is still three orders
+// of magnitude below the thing it must never match -- an authored value sits
+// 0.3 relative away from its corrected form, not 1e-4. It is also five times
+// tighter than the 5e-4 that failed years ago, and that one ran against 512 ring
+// entries rather than 32.
+constexpr float kOursTolerance = 1e-4f;
 
 // What the ring cannot tell apart, and what can.
 //
@@ -666,7 +686,11 @@ void remember_authored(float value) {
 // Five times the ring's tolerance: close enough to be confused, and the value
 // has to clear all of it plus the rounding.
 constexpr float kConfusable = 5.0f * kOursTolerance;
-constexpr float kSeparation = 0.004f;
+// Raised with the tolerance it has to clear. 0.004 was ten times the old 1e-5
+// window; against 1e-4 it would sit right on the edge and separate nothing.
+// 0.02 deg on 39 is 5e-4 relative -- five times outside, and still far below
+// anything visible.
+constexpr float kSeparation = 0.02f;
 
 // Always, not only against values already known.
 //
