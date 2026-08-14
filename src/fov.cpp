@@ -536,10 +536,26 @@ std::atomic<float> g_dst_last_ours[kMaxDestinations]{};
 // and at full weight that is the same number for hundreds of frames, which is
 // exactly why it is restricted to ramps.
 //
-// Four milliseconds is three times clear of a frame at 90 fps and two hundred
-// times the gap between the two calls it has to separate.
+// The threshold is measured, not assumed, because a fixed one cannot work.
+//
+// 4 ms is a quarter of a frame at 60 fps, more than half at 144, and a whole
+// frame at 240 -- where it would start swallowing the *next* frame's correction
+// and the picture would come out too wide. Any constant is wrong for somebody.
+//
+// The call pattern gives the frame length away for free: the detour runs about
+// two dozen times per frame in a tight burst, so the gaps between calls are
+// microseconds within a frame and a full frame length between them. The largest
+// gap in a sliding window is therefore the frame time, whatever the machine is
+// doing, and 40% of it separates the two cases with room on both sides.
 constexpr bool kOnePerSlotPerFrame = true;
-constexpr double kSameFrameMs = 4.0;
+constexpr std::size_t kGapWindow = 64;
+constexpr double kSameFrameFraction = 0.4;
+// Until the window has filled: small enough never to swallow a real frame.
+constexpr double kSameFrameFallbackMs = 1.0;
+
+std::atomic<long long> g_last_call_at{0};
+std::atomic<double> g_gaps[kGapWindow]{};
+std::atomic<std::size_t> g_gap_next{0};
 std::atomic<long long> g_dst_last_correct_at[kMaxDestinations]{};
 std::atomic<unsigned long long> g_second_writes{0};
 
@@ -556,6 +572,26 @@ double ticks_to_ms(long long span) {
         return static_cast<double>(f.QuadPart);
     }();
     return frequency > 0.0 ? (static_cast<double>(span) * 1000.0) / frequency : 0.0;
+}
+
+// Records the gap since the previous call and returns what counts as "still the
+// same frame" right now.
+double same_frame_window(long long now) {
+    const long long previous = g_last_call_at.exchange(now, std::memory_order_relaxed);
+    if (previous != 0) {
+        const double gap = ticks_to_ms(now - previous);
+        const std::size_t index = g_gap_next.fetch_add(1, std::memory_order_relaxed) % kGapWindow;
+        g_gaps[index].store(gap, std::memory_order_relaxed);
+    }
+
+    // The largest gap in the window is one frame: every burst of calls is
+    // separated from the next by exactly that, and everything inside a burst is
+    // orders of magnitude smaller.
+    double frame = 0.0;
+    for (std::size_t i = 0; i < kGapWindow; ++i) {
+        frame = std::max(frame, g_gaps[i].load(std::memory_order_relaxed));
+    }
+    return frame > 0.0 ? frame * kSameFrameFraction : kSameFrameFallbackMs;
 }
 
 // The two correction sites must not share one ring.
@@ -1608,8 +1644,10 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // Already corrected in this frame? Then this is the second write, and the
     // second write is our own value coming back. See kOnePerSlotPerFrame.
     if (kOnePerSlotPerFrame && slot != kNoSlot && weight > 0.0f) {
+        const long long now = ticks_now();
+        const double window = same_frame_window(now);
         const long long last = g_dst_last_correct_at[slot].load(std::memory_order_relaxed);
-        if (last != 0 && ticks_to_ms(ticks_now() - last) < kSameFrameMs) {
+        if (last != 0 && ticks_to_ms(now - last) < window) {
             g_second_writes.fetch_add(1, std::memory_order_relaxed);
             finish(original, "skip-2nd");
             return;
