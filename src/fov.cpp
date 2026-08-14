@@ -595,9 +595,36 @@ void remember_authored(float value) {
 constexpr float kConfusable = 5.0f * kOursTolerance;
 constexpr float kSeparation = 0.004f;
 
+// Always, not only against values already known.
+//
+// The conditional form cannot work, and the screen trace shows why. In one
+// cutscene the picture flips between 39.3141 and 29.7728 five times in a tenth
+// of a second, and those two numbers are one correction apart: 29.7728 is what
+// 39.3141 corrects to. 39.3141 is the cutscene camera's authored field of view
+// -- and it is also, to four decimals, what we had just written as the
+// correction of the *gameplay* camera, 15 ms earlier, into another slot.
+//
+// So our output for one camera is the authored value of another. No test that
+// compares values can ever separate those two, which is why three attempts at
+// telling them apart failed, and why it is this one cutscene: it needs two
+// cameras whose fields of view sit a factor of k apart.
+//
+// Waiting until the authored value is known does not help either, because both
+// arise in the same instant.
+//
+// An unconditional offset does. Every correction we emit is moved off the value
+// it would naturally take, so it cannot coincide with the value it was computed
+// from, whenever that value happens to appear. 0.004 deg on 39 is 1e-4 relative:
+// a fraction of a pixel, and the same order as the rounding the value collects
+// on its way through focal length anyway.
+constexpr bool kAlwaysOffset = true;
+
 float separate_from_authored(float value) {
     if (!kSeparateFromAuthored) {
         return value;
+    }
+    if (kAlwaysOffset) {
+        value += kSeparation;
     }
     // Four attempts, because stepping clear of one authored value can land on
     // the next. Four steps is 0.016 deg, still invisible; giving up after that
