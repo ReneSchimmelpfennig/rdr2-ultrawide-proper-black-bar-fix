@@ -847,6 +847,13 @@ std::atomic<std::size_t> g_frame_slot{static_cast<std::size_t>(-1)};
 // Which structure was last seen carrying the value that got rendered.
 std::atomic<std::size_t> g_render_slot{static_cast<std::size_t>(-1)};
 
+// Armed by a swing in the rendered field of view, spent one line per call. 600
+// covers about twenty frames of a two-dozen-call frame -- both sides of several
+// flips, and nothing else in the session.
+constexpr int kFlipTrace = 600;
+std::atomic<float> g_flip_last_shader{0.0f};
+std::atomic<int> g_flip_budget{0};
+
 // Some destinations are temporaries on the stack -- the log shows addresses in
 // the thread stack range receiving two different camera values in the same
 // frame. Stack addresses get reused, so without eviction the table fills up with
@@ -1110,6 +1117,37 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                              weight, slot == kNoSlot ? -1 : static_cast<int>(slot), ours,
                              shader_now, shader_now - ours, original, final_value);
             }
+        }
+
+        // Catch the flip-flop in the act, with every decision around it.
+        //
+        // The picture in one cutscene alternates between an authored value and
+        // its correction five times in a tenth of a second. Four value-based
+        // explanations were built and measured and none of them changed it, so
+        // the deciding factor is something else -- and nobody has yet seen the
+        // decisions themselves, because the sample budget of 120 calls is spent
+        // long before the flicker starts, a second and a half into the scene.
+        //
+        // This arms on the symptom: a settled cutscene where the rendered field
+        // of view swings by more than a degree between frames. From then on
+        // every call is logged for a while, both the corrected and the skipped,
+        // with everything that feeds the decision. Two consecutive frames of one
+        // flip, side by side, is the measurement that has been missing.
+        if (weight >= kSettledWeight && shader_now != 0.0f) {
+            const float last = g_flip_last_shader.exchange(shader_now, std::memory_order_relaxed);
+            if (last != 0.0f && std::fabs(shader_now - last) > 1.0f) {
+                g_flip_budget.store(kFlipTrace, std::memory_order_relaxed);
+            }
+        }
+        if (g_flip_budget.load(std::memory_order_relaxed) > 0) {
+            g_flip_budget.fetch_sub(1, std::memory_order_relaxed);
+            logger::info(
+                "FLIP  {:<8} slot {:<3} dst 0x{:012X}  w {:.4f}  in {:9.4f}  prev {:9.4f}"
+                "  shader {:9.4f}  -> {:9.4f}   rendered {}  render-slot {}  frame-slot {}",
+                decision, slot == kNoSlot ? -1 : static_cast<int>(slot), dst, weight, original,
+                previous_now, shader_now, final_value, is_rendered ? "yes" : "no ",
+                static_cast<int>(g_render_slot.load(std::memory_order_relaxed)),
+                static_cast<int>(g_frame_slot.load(std::memory_order_relaxed)));
         }
 
         // Where is the cut, relative to the bar weight? See kCutThreshold.
