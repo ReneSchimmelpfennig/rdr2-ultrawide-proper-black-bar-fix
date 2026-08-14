@@ -553,12 +553,36 @@ constexpr float kMinimumCorrection = 0.05f;  // degrees
 
 // Values proven to be authored: seen as an input while matching nothing we ever
 // wrote. That proof is the point -- a guess here would poison the set.
-constexpr std::size_t kAuthoredRing = 32;
+// Distinct values, not recent writes. The difference is the whole mechanism.
+//
+// The first version appended on every call that did not match the ring. That is
+// about 28 calls a frame, 1700 a second, into 32 seats: the set held twenty
+// milliseconds of history. By the time a correction swept across an authored
+// value, that value had long rotated out, so nothing was ever separated from it
+// and the flash could happen exactly as before -- which is what the second run
+// showed, unchanged.
+//
+// A scene has a handful of distinct authored fields of view, and they repeat.
+// Storing each only once turns twenty milliseconds of memory into the whole
+// cutscene.
+constexpr std::size_t kAuthoredRing = 64;
 std::atomic<std::uint32_t> g_authored[kAuthoredRing]{};
 std::atomic<std::size_t> g_authored_next{0};
 std::atomic<unsigned long long> g_separations{0};
+std::atomic<unsigned long long> g_tiny_skips{0};
 
 void remember_authored(float value) {
+    for (std::size_t i = 0; i < kAuthoredRing; ++i) {
+        const std::uint32_t seen = g_authored[i].load(std::memory_order_relaxed);
+        if (seen == 0) {
+            continue;
+        }
+        float known = 0.0f;
+        std::memcpy(&known, &seen, sizeof(known));
+        if (std::fabs(value - known) <= std::fabs(value) * kOursTolerance) {
+            return;  // already known
+        }
+    }
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
     const std::size_t index =
@@ -1326,6 +1350,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // only ever skips the first half percent of a ramp -- where the correction is
     // smaller than that anyway. Above it nothing changes.
     if (kSkipTinyCorrections && std::fabs(result - original) < kMinimumCorrection) {
+        g_tiny_skips.fetch_add(1, std::memory_order_relaxed);
         finish(original, "skip-tiny");
         return;
     }
@@ -1530,7 +1555,11 @@ void clamp_detour(std::uintptr_t camera) {
         const float our_last = g_clamp_last_ours[seat].load(std::memory_order_relaxed);
         const bool already_ours = is_our_own_output_for(before, previous_input, our_last);
 
-        if (g_clamp_census.fetch_add(1, std::memory_order_relaxed) < 400 && w > 0.0f) {
+        // Counted only in cutscenes. It used to increment on every call, so the
+        // budget of 400 was spent during gameplay and not one CLAMP line survived
+        // into the transition -- the one place the clamp's own input matters, and
+        // the reason the last diagnosis had to guess at it.
+        if (w > 0.0f && g_clamp_census.fetch_add(1, std::memory_order_relaxed) < 400) {
             logger::info("CLAMP w {:.4f}  cam 0x{:012X}  fov {:8.4f}{}", w, camera, before,
                          already_ours ? "  (already ours)" : "");
         }
@@ -1546,6 +1575,7 @@ void clamp_detour(std::uintptr_t camera) {
             // written. Same rule as the other correction site, same reason.
             if (kSkipTinyCorrections && std::fabs(corrected - before) < kMinimumCorrection) {
                 // Nothing worth writing, so nothing to remember or defend.
+                g_tiny_skips.fetch_add(1, std::memory_order_relaxed);
             } else {
                 corrected = separate_from_authored(corrected);
                 corrected = tag(corrected);
@@ -1863,6 +1893,8 @@ double display_aspect() { return g_display_aspect.load(std::memory_order_relaxed
 unsigned long long identity_saves() { return g_identity_saves.load(std::memory_order_relaxed); }
 
 unsigned long long separations() { return g_separations.load(std::memory_order_relaxed); }
+
+unsigned long long tiny_skips() { return g_tiny_skips.load(std::memory_order_relaxed); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();

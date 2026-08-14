@@ -143,4 +143,10 @@ void report_destinations(std::uintptr_t module_base);
 // against a MISS count of zero is the result worth having.
 [[nodiscard]] unsigned long long separations();
 
+// How many corrections were skipped for being too small to see. Zero would mean
+// the no-op writes that poison the ring never happen, which the last log says
+// they do -- so zero here is a sign the guard is not reached, not that it is
+// unnecessary.
+[[nodiscard]] unsigned long long tiny_skips();
+
 }  // namespace fov

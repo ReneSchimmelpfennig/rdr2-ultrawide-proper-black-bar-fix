@@ -775,9 +775,9 @@ DWORD WINAPI worker(LPVOID) {
                     in_cutscene = false;
                     logger::info("");
                     logger::info("--- the cutscene just ended (the counts that matter) ---");
-                    logger::info("corrections nudged clear of an authored value: {}  (identity"
-                                 " test: {})",
-                                 fov::separations(), fov::identity_saves());
+                    logger::info("nudged clear of an authored value: {}   too small to write: {}"
+                                 "   (identity test: {})",
+                                 fov::separations(), fov::tiny_skips(), fov::identity_saves());
                     uibox::report(module.base);
                     overlay::report(module.base);
                 }
