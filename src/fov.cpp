@@ -540,6 +540,17 @@ bool is_our_own_output(float value) { return matches_something_we_wrote(value); 
 // worst it does nothing.
 constexpr bool kSeparateFromAuthored = true;
 
+// A correction that changes nothing must not be recorded as if it had.
+//
+// Both correction sites blend towards the full factor with the letterbox weight,
+// so at the start of a ramp they compute the value they were given. Remembering
+// that as our own output puts an authored value into the ring, and the ring then
+// mistakes that camera's own value for ours for as long as the entry lives.
+// Below this threshold the write is skipped entirely: no memory of it, and no
+// change to the picture, since there was none to make.
+constexpr bool kSkipTinyCorrections = true;
+constexpr float kMinimumCorrection = 0.05f;  // degrees
+
 // Values proven to be authored: seen as an input while matching nothing we ever
 // wrote. That proof is the point -- a guess here would poison the set.
 constexpr std::size_t kAuthoredRing = 32;
@@ -1295,6 +1306,30 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         }
     }
 
+    // A correction too small to see must never enter the ring.
+    //
+    // This is the fault the RINGHIT lines exposed, and it had been hiding behind
+    // every other symptom. At the start of a ramp the blend factor is barely
+    // below 1, so the "correction" of an authored 39.3141 is 39.3141 -- and it
+    // goes into the ring as ours. From that moment the ring recognises the
+    // camera's own authored value as our output and ApplyCameraState waves it
+    // through for the rest of the shot:
+    //
+    //   RINGHIT apply slot 25  in 39.3141 (was 38.8079, jump +0.5062)
+    //           matched 39.3141 written 63 ms ago by the focal clamp
+    //
+    // Ninety of those in one transition. It also explains the misses logged at
+    // weight 0.0003, where the whole correction was three thousandths of a
+    // degree: a no-op with the standing of a real entry.
+    //
+    // 0.05 deg on a 39 deg field is 0.13%, well under anything visible, and it
+    // only ever skips the first half percent of a ramp -- where the correction is
+    // smaller than that anyway. Above it nothing changes.
+    if (kSkipTinyCorrections && std::fabs(result - original) < kMinimumCorrection) {
+        finish(original, "skip-tiny");
+        return;
+    }
+
     result = separate_from_authored(result);
     result = tag(result);
     // Only corrections go into the ring. That is the whole point of it: it has
@@ -1506,14 +1541,21 @@ void clamp_detour(std::uintptr_t camera) {
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
             const double factor = framing::blended_factor(scaled, w);
             float corrected = static_cast<float>(framing::corrected_vfov_deg(before, factor));
-            corrected = separate_from_authored(corrected);
-            corrected = tag(corrected);
-            remember_our_output(corrected, -1);  // -1: written by the clamp, not by a slot
-            g_clamp_last_ours[seat].store(corrected, std::memory_order_relaxed);
-            std::memcpy(reinterpret_cast<void*>(camera + patterns::kFocalClampFov), &corrected,
-                        sizeof(corrected));
-            before = corrected;  // so the clamp guard below compares against ours
-            ours = true;
+            // The clamp is where the poisoning was caught in the act: every one
+            // of those ninety RINGHIT lines matched an entry this site had
+            // written. Same rule as the other correction site, same reason.
+            if (kSkipTinyCorrections && std::fabs(corrected - before) < kMinimumCorrection) {
+                // Nothing worth writing, so nothing to remember or defend.
+            } else {
+                corrected = separate_from_authored(corrected);
+                corrected = tag(corrected);
+                remember_our_output(corrected, -1);  // -1: written by the clamp, not by a slot
+                g_clamp_last_ours[seat].store(corrected, std::memory_order_relaxed);
+                std::memcpy(reinterpret_cast<void*>(camera + patterns::kFocalClampFov), &corrected,
+                            sizeof(corrected));
+                before = corrected;  // so the clamp guard below compares against ours
+                ours = true;
+            }
         } else {
             ours = already_ours;
         }
