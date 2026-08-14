@@ -149,4 +149,9 @@ void report_destinations(std::uintptr_t module_base);
 // unnecessary.
 [[nodiscard]] unsigned long long tiny_skips();
 
+// How many second corrections of the same structure in one frame were skipped.
+// Zero means the double write never happened; a number means it did and was
+// caught, which is what the ramp trace predicted.
+[[nodiscard]] unsigned long long second_writes();
+
 }  // namespace fov

@@ -518,6 +518,46 @@ std::atomic<float> g_dst_prev_in[kMaxDestinations]{};
 // What we ourselves last wrote into each slot. The positive half of the test.
 std::atomic<float> g_dst_last_ours[kMaxDestinations]{};
 
+// One correction per structure per frame, timed rather than valued.
+//
+// The ramp trace shows the rendered camera corrected twice inside a single
+// frame, and the second one is the fault:
+//
+//   00:07:46.223 CORRECT slot 25  in 51.2820 -> 39.3190   the authored camera
+//   00:07:46.223 CORRECT slot 25  in 39.3174 -> 29.7796   our own value, again
+//
+// The game hands our value back blended by up to 4.8e-5 relative, which is
+// outside the ring's window; widening the window to catch it was measured and
+// brought the sustained jump back, so the two cannot be told apart by distance.
+//
+// They can be told apart by time. Both corrections above land in the same
+// millisecond; the next frame's is eleven later. The existing once-per-frame
+// rule cannot do this -- it keys on the letterbox weight as its frame marker,
+// and at full weight that is the same number for hundreds of frames, which is
+// exactly why it is restricted to ramps.
+//
+// Four milliseconds is three times clear of a frame at 90 fps and two hundred
+// times the gap between the two calls it has to separate.
+constexpr bool kOnePerSlotPerFrame = true;
+constexpr double kSameFrameMs = 4.0;
+std::atomic<long long> g_dst_last_correct_at[kMaxDestinations]{};
+std::atomic<unsigned long long> g_second_writes{0};
+
+long long ticks_now() {
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    return now.QuadPart;
+}
+
+double ticks_to_ms(long long span) {
+    static const double frequency = [] {
+        LARGE_INTEGER f{};
+        QueryPerformanceFrequency(&f);
+        return static_cast<double>(f.QuadPart);
+    }();
+    return frequency > 0.0 ? (static_cast<double>(span) * 1000.0) / frequency : 0.0;
+}
+
 // The two correction sites must not share one ring.
 //
 // Proven from the decision trace, not argued. Every frame the focal clamp writes
@@ -1036,6 +1076,7 @@ std::size_t record_destination(std::uintptr_t dst) {
         g_dst_last_final[slot].store(0.0f, std::memory_order_relaxed);
         g_dst_prev_in[slot].store(0.0f, std::memory_order_relaxed);
         g_dst_last_ours[slot].store(0.0f, std::memory_order_relaxed);
+        g_dst_last_correct_at[slot].store(0, std::memory_order_relaxed);
         if (g_render_slot.load(std::memory_order_relaxed) == slot) {
             g_render_slot.store(static_cast<std::size_t>(-1), std::memory_order_relaxed);
         }
@@ -1564,6 +1605,17 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         return;
     }
 
+    // Already corrected in this frame? Then this is the second write, and the
+    // second write is our own value coming back. See kOnePerSlotPerFrame.
+    if (kOnePerSlotPerFrame && slot != kNoSlot && weight > 0.0f) {
+        const long long last = g_dst_last_correct_at[slot].load(std::memory_order_relaxed);
+        if (last != 0 && ticks_to_ms(ticks_now() - last) < kSameFrameMs) {
+            g_second_writes.fetch_add(1, std::memory_order_relaxed);
+            finish(original, "skip-2nd");
+            return;
+        }
+    }
+
     result = separate_from_authored(result);
     result = tag(result);
     // Only corrections go into the ring. That is the whole point of it: it has
@@ -1571,6 +1623,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     remember_our_output(result, slot == kNoSlot ? -1 : static_cast<int>(slot));
     if (slot != kNoSlot) {
         g_dst_last_ours[slot].store(result, std::memory_order_relaxed);
+        g_dst_last_correct_at[slot].store(ticks_now(), std::memory_order_relaxed);
     }
     std::memcpy(reinterpret_cast<void*>(fov_addr), &result, sizeof(result));
 
@@ -2124,6 +2177,8 @@ unsigned long long identity_saves() { return g_identity_saves.load(std::memory_o
 unsigned long long separations() { return g_separations.load(std::memory_order_relaxed); }
 
 unsigned long long tiny_skips() { return g_tiny_skips.load(std::memory_order_relaxed); }
+
+unsigned long long second_writes() { return g_second_writes.load(std::memory_order_relaxed); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();
