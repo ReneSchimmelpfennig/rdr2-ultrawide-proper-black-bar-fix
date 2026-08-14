@@ -1702,7 +1702,15 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
 
         // Our own output, offered back to us inside the same frame -- whichever
         // structure it arrives in.
-        if (written_this_frame(original)) {
+        //
+        // Settled scenes only, and that boundary is measured rather than chosen.
+        // The double correction this removes was logged at w = 1.0000. During a
+        // ramp the game legitimately puts the same value into several structures
+        // in one frame, and the one that ends up rendered may be the second: the
+        // manual cinematic camera in free roam flickered consistently right
+        // after its cut with this rule running through the ramp, which is what
+        // that looks like from the outside.
+        if (weight >= kSettledWeight && written_this_frame(original)) {
             g_second_writes.fetch_add(1, std::memory_order_relaxed);
             finish(original, "skip-2nd");
             return;
