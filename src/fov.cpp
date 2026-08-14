@@ -366,11 +366,29 @@ constexpr std::size_t kOutputRing = 32;
 std::atomic<std::uint32_t> g_our_outputs[kOutputRing]{};
 std::atomic<std::size_t> g_output_next{0};
 
-void remember_our_output(float value) {
+// Provenance, so a ring hit can be read rather than guessed at.
+//
+// One cutscene shows two hard jumps at a cut inside the ramp: a value arrives in
+// a dozen structures at once, every one is waved through as ours, and it then
+// holds for 0.7 seconds. Whether that value was ever ours could not be answered
+// from the log -- the CORRECT lines run on a budget and none survived in that
+// window.
+//
+// These three say it outright: which entry matched, how long ago it was written,
+// and where it went. A hit on an entry written seconds earlier, or into a slot
+// that has nothing to do with the camera asking, is a coincidence; a hit on a
+// fresh entry from the rendered camera is genuinely ours.
+std::atomic<unsigned long long> g_ring_written_at[kOutputRing]{};  // GetTickCount64
+std::atomic<int> g_ring_slot[kOutputRing]{};                       // -1 = from the clamp
+std::atomic<std::size_t> g_ring_writer{static_cast<std::size_t>(-1)};
+
+void remember_our_output(float value, int slot) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
     const std::size_t index = g_output_next.fetch_add(1, std::memory_order_relaxed) % kOutputRing;
     g_our_outputs[index].store(bits, std::memory_order_relaxed);
+    g_ring_written_at[index].store(GetTickCount64(), std::memory_order_relaxed);
+    g_ring_slot[index].store(slot, std::memory_order_relaxed);
 }
 
 // A hair of tolerance, because our own output does not come back unchanged.
@@ -455,7 +473,9 @@ std::atomic<float> g_dst_prev_in[kMaxDestinations]{};
 // What we ourselves last wrote into each slot. The positive half of the test.
 std::atomic<float> g_dst_last_ours[kMaxDestinations]{};
 
-bool matches_something_we_wrote(float value) {
+// The index of the matching entry, or -1. Same test as before, one level lower
+// so the caller can report what it hit.
+int ring_match_index(float value) {
     for (std::size_t i = 0; i < kOutputRing; ++i) {
         const std::uint32_t bits = g_our_outputs[i].load(std::memory_order_relaxed);
         if (bits == 0) {
@@ -464,10 +484,34 @@ bool matches_something_we_wrote(float value) {
         float ours = 0.0f;
         std::memcpy(&ours, &bits, sizeof(ours));
         if (std::fabs(value - ours) <= std::fabs(ours) * kOursTolerance) {
-            return true;
+            return static_cast<int>(i);
         }
     }
-    return false;
+    return -1;
+}
+
+bool matches_something_we_wrote(float value) { return ring_match_index(value) >= 0; }
+
+// Reports the entry a value matched: its value, its age, and the slot it was
+// written into.
+void log_ring_hit(const char* where, int slot, float value, float previous_input, int hit) {
+    if (hit < 0) {
+        return;
+    }
+    const std::uint32_t bits = g_our_outputs[hit].load(std::memory_order_relaxed);
+    float ours = 0.0f;
+    std::memcpy(&ours, &bits, sizeof(ours));
+    const unsigned long long written = g_ring_written_at[hit].load(std::memory_order_relaxed);
+    const unsigned long long age = written == 0 ? 0 : GetTickCount64() - written;
+    const int from = g_ring_slot[hit].load(std::memory_order_relaxed);
+
+    logger::info("RINGHIT {} slot {:<3} in {:8.4f} (was {:8.4f}, jump {:+.4f})", where, slot, value,
+                 previous_input, value - previous_input);
+    if (from < 0) {
+        logger::info("        matched {:8.4f} written {} ms ago by the focal clamp", ours, age);
+    } else {
+        logger::info("        matched {:8.4f} written {} ms ago into slot {}", ours, age, from);
+    }
 }
 
 bool is_our_own_output(float value) { return matches_something_we_wrote(value); }
@@ -1005,6 +1049,15 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                              "  shader {:8.4f}  decision {}",
                              weight, slot == kNoSlot ? -1 : static_cast<int>(slot), last_in,
                              original, original - last_in, shader_now, decision);
+
+                // The one question this whole line cannot answer on its own: a
+                // jump that we then wave through as our own output is either a
+                // value we really did write, or the ring matching by accident.
+                // Only here, where both the jump and the decision are known.
+                if (std::strcmp(decision, "skip-own") == 0) {
+                    log_ring_hit("apply", slot == kNoSlot ? -1 : static_cast<int>(slot), original,
+                                 last_in, ring_match_index(original));
+                }
             }
         }
         // Only the rendered camera is interesting, and there are two dozen
@@ -1246,7 +1299,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     result = tag(result);
     // Only corrections go into the ring. That is the whole point of it: it has
     // to hold what we wrote, not what the game wrote.
-    remember_our_output(result);
+    remember_our_output(result, slot == kNoSlot ? -1 : static_cast<int>(slot));
     if (slot != kNoSlot) {
         g_dst_last_ours[slot].store(result, std::memory_order_relaxed);
     }
@@ -1455,7 +1508,7 @@ void clamp_detour(std::uintptr_t camera) {
             float corrected = static_cast<float>(framing::corrected_vfov_deg(before, factor));
             corrected = separate_from_authored(corrected);
             corrected = tag(corrected);
-            remember_our_output(corrected);
+            remember_our_output(corrected, -1);  // -1: written by the clamp, not by a slot
             g_clamp_last_ours[seat].store(corrected, std::memory_order_relaxed);
             std::memcpy(reinterpret_cast<void*>(camera + patterns::kFocalClampFov), &corrected,
                         sizeof(corrected));
