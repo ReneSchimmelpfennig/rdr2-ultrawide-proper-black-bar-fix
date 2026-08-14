@@ -155,17 +155,62 @@ worth more than the code:
 Point 4 is the one that matters. If the coincidence caused the flip-flop, moving
 the values apart would have stopped it. It did not, so something else decides
 frame by frame whether that camera is corrected, and the value collision is only
-how the decision becomes visible. Every value-based idea is therefore looking in
-the wrong place.
+how the decision becomes visible. Every value-based idea is looking in the wrong
+place.
 
 The switches are `kSeparateFromAuthored`, `kAlwaysOffset`, `kSkipTinyCorrections`
 and `kIdentityTest` in `src/fov.cpp`, all false, all with their reasoning next to
 them.
 
-What is still worth trying, in order: find what *else* differs between the frames
-that get corrected and the frames that do not — the decision string is already in
-the log for every call, and nobody has yet compared two consecutive frames of one
-flip-flop line by line.
+### What actually found it: tracing the decision, not the value
+
+Logging every decision around the flicker — armed by the symptom itself, so the
+sample budget is spent where it matters — settled in one run what four value
+experiments could not.
+
+The same camera across 155 frames, perfectly regular:
+
+```
+FLIP skip-own slot 25  in 39.3141 -> out 39.3141    every frame
+FLIP CORRECT  slot 25  in 39.3131 -> out 29.7723    every frame
+```
+
+The structure is written **twice per frame**. The first value is a constant
+39.3141 and is skipped as ours every time; the second drifts and is corrected.
+Usually the second write saves the frame. Where it does not come, nothing is
+corrected at all — and those frames are exactly the visible faults:
+
+```
+23:02:56.801  skip-own(39.3141)                      one frame  -> the flash
+23:03:04.102  skip-own(39.3141), skip-not(27.9647)   dozens     -> the held jump
+```
+
+Both symptoms, one cause. And the ring-hit provenance names the writer: **the
+focal clamp puts 39.3141 into the ring every frame**, as its correction of a
+different camera, and that value happens to equal the cutscene camera's authored
+field of view.
+
+Two ways out, and the log chose between them:
+
+- **Hide the clamp's writes from ApplyCameraState.** Tried; the picture came out
+  too close. So the clamp's corrected value flows back into camera states, and
+  without seeing it in the ring the other site corrects it twice. The ring has to
+  stay shared. (`kSeparateRings`, false.)
+- **Stop producing the value.** Switching the clamp's correction off removed the
+  held jump and kept the width right — but the manual cinematic camera in free
+  roam then took a visible moment to reach our value, because reaching a camera a
+  frame earlier is what that site is for.
+
+The resolution is that those two live at different weights. The poisoning was
+logged at w = 1.0000, long settled; the cinematic camera needs the early
+correction *during* a ramp. So the clamp corrects while the weight is moving and
+stops once the scene has settled, where ApplyCameraState alone has always been
+enough (`kClampCorrectsOnlyWhileRamping`). Its defence against the game's own
+focal limiting runs in both cases.
+
+Result: the held jump is gone, the cinematic camera is prompt again, and one jump
+at the start of that cutscene's transition remains — inside the ramp, which is
+where the clamp is still active. That is where to look next.
 
 ### Still open: the sustained jump at a cut inside the ramp
 

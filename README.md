@@ -54,13 +54,19 @@ coincidence. In one log our corrected 39.3139 sat 5e-6 away from another
 camera's authored 39.3141 — inside the tolerance, so the authored value was
 mistaken for ours and left alone.
 
-Tightening the tolerance is not the answer; the rounding it has to catch is only
-a factor of two away. Four attempts at a better test were built and measured, and
-all four changed nothing on screen — including one that moved every correction
-0.004° clear so the two values could never coincide. That last result is the
-useful one: if the collision caused it, separating the values would have stopped
-it. Something else decides, frame by frame, whether a camera gets corrected.
-[`docs/how-it-works.md`](docs/how-it-works.md) has all four with their numbers.
+Tightening the tolerance is not the answer, and neither is a better test of the
+value: four were built and measured and none changed anything on screen.
+
+What did find it was tracing the *decision* instead. The ring of recently written
+values is shared by both correction sites, and the focal-length clamp was filling
+it, every frame, with a value that happened to equal another camera's authored
+field of view — so that camera's own value kept being mistaken for ours and left
+alone. The clamp now corrects only while the letterbox is animating, which is
+when it is actually needed, and stays quiet once a scene has settled.
+
+That removed a sustained mis-framing in one cutscene. A single-frame flash
+remains, rare and now well understood;
+[`docs/how-it-works.md`](docs/how-it-works.md) has the full trace and the numbers.
 
 The plugin notices it after the fact and repairs it on the next frame, and it
 logs each one, so the rate is known rather than estimated: three in a session of
