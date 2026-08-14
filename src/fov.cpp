@@ -473,13 +473,40 @@ std::atomic<float> g_dst_prev_in[kMaxDestinations]{};
 // What we ourselves last wrote into each slot. The positive half of the test.
 std::atomic<float> g_dst_last_ours[kMaxDestinations]{};
 
-// The index of the matching entry, or -1. Same test as before, one level lower
-// so the caller can report what it hit.
-int ring_match_index(float value) {
+// The two correction sites must not share one ring.
+//
+// Proven from the decision trace, not argued. Every frame the focal clamp writes
+// 39.3141 into the ring -- its correction of another camera -- and that is, to
+// the last decimal, the cutscene camera's authored field of view.
+// ApplyCameraState reads the same ring, so every frame it takes that camera's
+// own authored value for our output and skips it:
+//
+//   FLIP skip-own slot 25  in 39.3141 -> out 39.3141   (every frame, 155 of them)
+//   FLIP CORRECT  slot 25  in 39.3131 -> out 29.7723   (the second write saves it)
+//
+// The structure is written twice per frame, and only the second write is
+// corrected. In the frames where that second write does not come, nothing is
+// corrected at all -- and those are exactly the visible faults:
+//
+//   23:02:56.801   skip-own(39.3141)                      <- the one-frame flash
+//   23:03:04.102   skip-own(39.3141), skip-not(27.9647)   <- and dozens in a row,
+//   ...                                                      the sustained jump
+//
+// So the clamp's outputs are invisible to ApplyCameraState from here on. The
+// other direction stays: the clamp still sees everything, because it does need
+// to recognise what ApplyCameraState just wrote or it would correct it twice.
+constexpr bool kSeparateRings = true;
+
+// `include_clamp` is what makes it asymmetric.
+int ring_match_index(float value, bool include_clamp) {
     for (std::size_t i = 0; i < kOutputRing; ++i) {
         const std::uint32_t bits = g_our_outputs[i].load(std::memory_order_relaxed);
         if (bits == 0) {
             continue;
+        }
+        if (kSeparateRings && !include_clamp &&
+            g_ring_slot[i].load(std::memory_order_relaxed) < 0) {
+            continue;  // written by the clamp; not ours as far as this site knows
         }
         float ours = 0.0f;
         std::memcpy(&ours, &bits, sizeof(ours));
@@ -490,7 +517,9 @@ int ring_match_index(float value) {
     return -1;
 }
 
-bool matches_something_we_wrote(float value) { return ring_match_index(value) >= 0; }
+bool matches_something_we_wrote(float value, bool include_clamp) {
+    return ring_match_index(value, include_clamp) >= 0;
+}
 
 // Reports the entry a value matched: its value, its age, and the slot it was
 // written into.
@@ -514,7 +543,9 @@ void log_ring_hit(const char* where, int slot, float value, float previous_input
     }
 }
 
-bool is_our_own_output(float value) { return matches_something_we_wrote(value); }
+// Unqualified: the widest reading, kept for callers that only want to know
+// whether a value was ever ours at all.
+bool is_our_own_output(float value) { return matches_something_we_wrote(value, true); }
 
 // Make the collision impossible instead of trying to detect it.
 //
@@ -711,8 +742,8 @@ std::size_t clamp_seat(std::uintptr_t camera) {
 
 bool near_enough(float a, float b) { return std::fabs(a - b) <= std::fabs(a) * kOursTolerance; }
 
-bool is_our_own_output_for(float value, float previous_input, float our_last) {
-    if (!matches_something_we_wrote(value)) {
+bool is_our_own_output_for(float value, float previous_input, float our_last, bool include_clamp) {
+    if (!matches_something_we_wrote(value, include_clamp)) {
         return false;
     }
     if (!kIdentityTest) {
@@ -968,7 +999,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // causes the flash belongs to a camera we are *not* correcting -- it never
     // reaches that site. Every structure passes through here, and matching
     // nothing in the ring is proof the value is not ours.
-    if (kSeparateFromAuthored && !matches_something_we_wrote(original)) {
+    if (kSeparateFromAuthored && !matches_something_we_wrote(original, true)) {
         remember_authored(original);
     }
 
@@ -1169,7 +1200,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 // Only here, where both the jump and the decision are known.
                 if (std::strcmp(decision, "skip-own") == 0) {
                     log_ring_hit("apply", slot == kNoSlot ? -1 : static_cast<int>(slot), original,
-                                 last_in, ring_match_index(original));
+                                 last_in, ring_match_index(original, true));
                 }
             }
         }
@@ -1289,10 +1320,12 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         finish(original, "skip-not");
         return;
     }
+    // false: the clamp's own outputs do not count as ours here. See kSeparateRings.
     if (is_our_own_output_for(original, previous_input,
                               slot != kNoSlot
                                   ? g_dst_last_ours[slot].load(std::memory_order_relaxed)
-                                  : 0.0f)) {
+                                  : 0.0f,
+                              false)) {
         finish(original, "skip-own");
         return;
     }
@@ -1631,7 +1664,10 @@ void clamp_detour(std::uintptr_t camera) {
         const float previous_input = g_clamp_prev_in[seat].exchange(before,
                                                                     std::memory_order_relaxed);
         const float our_last = g_clamp_last_ours[seat].load(std::memory_order_relaxed);
-        const bool already_ours = is_our_own_output_for(before, previous_input, our_last);
+        // true: the clamp must see everything, including what ApplyCameraState
+        // wrote a moment ago, or it corrects that value a second time.
+        const bool already_ours =
+            is_our_own_output_for(before, previous_input, our_last, true);
 
         // Counted only in cutscenes. It used to increment on every call, so the
         // budget of 400 was spent during gameplay and not one CLAMP line survived
