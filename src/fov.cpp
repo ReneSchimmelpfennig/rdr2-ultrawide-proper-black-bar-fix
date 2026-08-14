@@ -558,6 +558,8 @@ std::atomic<double> g_gaps[kGapWindow]{};
 std::atomic<std::size_t> g_gap_next{0};
 std::atomic<long long> g_dst_last_correct_at[kMaxDestinations]{};
 std::atomic<unsigned long long> g_second_writes{0};
+// When we last corrected anything at all, for the frame boundary.
+std::atomic<long long> g_last_correct_at{0};
 
 long long ticks_now() {
     LARGE_INTEGER now{};
@@ -572,6 +574,51 @@ double ticks_to_ms(long long span) {
         return static_cast<double>(f.QuadPart);
     }();
     return frequency > 0.0 ? (static_cast<double>(span) * 1000.0) / frequency : 0.0;
+}
+
+// What we have written in the frame currently in progress.
+//
+// The per-slot rule was not enough, and the log says exactly why: in the frame
+// that still flickered, the two writes landed in *different* structures.
+//
+//   00:31:00.857  slot 29  correcting 51.2820 -> 39.3190     the authored camera
+//   00:31:00.857  slot 25  correcting 39.3184 -> 29.7806     our value, again
+//
+// Slot 25 had not been corrected that frame, so nothing stopped it. What the two
+// share is the frame, not the structure.
+//
+// Scoping the comparison to one frame is what makes a generous window safe here.
+// The ring spans half a second and has to be held at 1e-5, because widening it
+// was measured to swallow values that needed correcting. This set is emptied
+// every frame and holds at most a handful of entries, so 1e-3 cannot reach
+// anything but our own output: an authored value sits 0.3 relative from its
+// correction, three hundred times further out.
+constexpr std::size_t kFrameOutputs = 8;
+constexpr float kSameFrameOurs = 1e-3f;
+std::atomic<float> g_frame_outputs[kFrameOutputs]{};
+std::atomic<std::size_t> g_frame_output_next{0};
+
+void forget_frame_outputs() {
+    for (std::size_t i = 0; i < kFrameOutputs; ++i) {
+        g_frame_outputs[i].store(0.0f, std::memory_order_relaxed);
+    }
+    g_frame_output_next.store(0, std::memory_order_relaxed);
+}
+
+void remember_frame_output(float value) {
+    const std::size_t index =
+        g_frame_output_next.fetch_add(1, std::memory_order_relaxed) % kFrameOutputs;
+    g_frame_outputs[index].store(value, std::memory_order_relaxed);
+}
+
+bool written_this_frame(float value) {
+    for (std::size_t i = 0; i < kFrameOutputs; ++i) {
+        const float ours = g_frame_outputs[i].load(std::memory_order_relaxed);
+        if (ours != 0.0f && std::fabs(value - ours) <= std::fabs(ours) * kSameFrameOurs) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Records the gap since the previous call and returns what counts as "still the
@@ -1643,10 +1690,26 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
 
     // Already corrected in this frame? Then this is the second write, and the
     // second write is our own value coming back. See kOnePerSlotPerFrame.
-    if (kOnePerSlotPerFrame && slot != kNoSlot && weight > 0.0f) {
+    if (kOnePerSlotPerFrame && weight > 0.0f) {
         const long long now = ticks_now();
         const double window = same_frame_window(now);
-        const long long last = g_dst_last_correct_at[slot].load(std::memory_order_relaxed);
+
+        // A frame boundary: everything written before it belongs to the past.
+        const long long previous_any = g_last_correct_at.load(std::memory_order_relaxed);
+        if (previous_any != 0 && ticks_to_ms(now - previous_any) >= window) {
+            forget_frame_outputs();
+        }
+
+        // Our own output, offered back to us inside the same frame -- whichever
+        // structure it arrives in.
+        if (written_this_frame(original)) {
+            g_second_writes.fetch_add(1, std::memory_order_relaxed);
+            finish(original, "skip-2nd");
+            return;
+        }
+
+        const long long last =
+            slot != kNoSlot ? g_dst_last_correct_at[slot].load(std::memory_order_relaxed) : 0;
         if (last != 0 && ticks_to_ms(now - last) < window) {
             g_second_writes.fetch_add(1, std::memory_order_relaxed);
             finish(original, "skip-2nd");
@@ -1659,6 +1722,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // Only corrections go into the ring. That is the whole point of it: it has
     // to hold what we wrote, not what the game wrote.
     remember_our_output(result, slot == kNoSlot ? -1 : static_cast<int>(slot));
+    remember_frame_output(result);
+    g_last_correct_at.store(ticks_now(), std::memory_order_relaxed);
     if (slot != kNoSlot) {
         g_dst_last_ours[slot].store(result, std::memory_order_relaxed);
         g_dst_last_correct_at[slot].store(ticks_now(), std::memory_order_relaxed);
