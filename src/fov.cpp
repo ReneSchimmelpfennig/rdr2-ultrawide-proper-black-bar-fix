@@ -693,11 +693,33 @@ constexpr float kSeparation = 0.004f;
 constexpr bool kAlwaysOffset = true;
 
 float separate_from_authored(float value) {
-    if (!kSeparateFromAuthored) {
-        return value;
-    }
+    // The offset no longer hangs on kSeparateFromAuthored.
+    //
+    // They were one switch, and that hid this case. The conditional nudging
+    // needs the set of known authored values and fired 1629 times a session for
+    // no measurable gain; the unconditional offset needs nothing and is the only
+    // thing that addresses the collision measured at the transition:
+    //
+    //   RINGHIT apply slot 25  in 39.3139 (was 51.2819)
+    //           matched 39.3141 written 16 ms ago into slot 29
+    //
+    // Our correction of the gameplay camera converges on exactly 39.3141 as the
+    // ramp completes -- the clamp trace shows it arriving, 39.3522, 39.3405,
+    // 39.3317, 39.3239, 39.3180, 39.3151 -- and 39.3141 is the cutscene camera's
+    // authored field of view. The two are not near each other by accident; they
+    // are equal. When the game switches cameras, the value arriving is
+    // indistinguishable from the one we wrote a sixteenth of a second earlier.
+    //
+    // Offsetting our own output by 0.004 deg, ten times the ring's tolerance,
+    // makes them distinguishable again. It was dismissed once on a "no change"
+    // reading, but that judgement was about the sustained jump, whose cause was
+    // the clamp writing every frame at settled weight. This collision was never
+    // separately tested.
     if (kAlwaysOffset) {
         value += kSeparation;
+    }
+    if (!kSeparateFromAuthored) {
+        return value;
     }
     // Four attempts, because stepping clear of one authored value can land on
     // the next. Four steps is 0.016 deg, still invisible; giving up after that
