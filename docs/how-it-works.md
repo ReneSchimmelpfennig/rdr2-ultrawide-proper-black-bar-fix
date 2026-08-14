@@ -128,6 +128,45 @@ remaining MISS events all sat at a letterbox weight of 0.0003, 0.0000 and 0.0123
 session before, on the same scenes, the misses sat at full weight and were 11 to
 17° wrong. That is the difference between a visible flash and bookkeeping.
 
+### What the separation was tested against, and why it is off
+
+Four builds, four measurements, no improvement — so it ships switched off, along
+with two smaller rules tried in the same run. What the four runs established is
+worth more than the code:
+
+1. **The ring holds authored values.** At the start of a ramp the blend factor is
+   barely below 1, so a "correction" returns its own input, and that goes into
+   the ring as ours. Skipping corrections below 0.05° removes those entries.
+   Measured: 68 skipped in one session, and **no change on screen**.
+2. **The set of known authored values held 20 ms.** It was appended on every
+   non-matching call — 1700 a second into 32 seats. Storing each distinct value
+   once instead makes it last a whole cutscene. Measured: nudges rose from 13 to
+   1629, and **no change on screen**.
+3. **Our output for one camera can be another camera's authored value.** The
+   screen trace of the affected cutscene flips between 39.3141 and 29.7728 five
+   times in a tenth of a second, and 29.7728 is exactly what 39.3141 corrects to.
+   The ring hit names the other side: 39.3141 had been written 15 ms earlier, as
+   the correction of the *gameplay* camera, into a different slot. Two cameras
+   whose fields of view sit a factor of k apart, which is why it is one cutscene
+   and not all of them.
+4. **And separating them does not fix it.** Offsetting every correction by
+   0.004° so the two can never coincide changed nothing either.
+
+Point 4 is the one that matters. If the coincidence caused the flip-flop, moving
+the values apart would have stopped it. It did not, so something else decides
+frame by frame whether that camera is corrected, and the value collision is only
+how the decision becomes visible. Every value-based idea is therefore looking in
+the wrong place.
+
+The switches are `kSeparateFromAuthored`, `kAlwaysOffset`, `kSkipTinyCorrections`
+and `kIdentityTest` in `src/fov.cpp`, all false, all with their reasoning next to
+them.
+
+What is still worth trying, in order: find what *else* differs between the frames
+that get corrected and the frames that do not — the decision string is already in
+the log for every call, and nobody has yet compared two consecutive frames of one
+flip-flop line by line.
+
 ### Still open: the sustained jump at a cut inside the ramp
 
 One cutscene shows two hard jumps rather than a flash, and the log says they are

@@ -55,8 +55,12 @@ camera's authored 39.3141 — inside the tolerance, so the authored value was
 mistaken for ours and left alone.
 
 Tightening the tolerance is not the answer; the rounding it has to catch is only
-a factor of two away. The clean fix is to ask "did we write this value into
-*this* camera", which is a larger change.
+a factor of two away. Four attempts at a better test were built and measured, and
+all four changed nothing on screen — including one that moved every correction
+0.004° clear so the two values could never coincide. That last result is the
+useful one: if the collision caused it, separating the values would have stopped
+it. Something else decides, frame by frame, whether a camera gets corrected.
+[`docs/how-it-works.md`](docs/how-it-works.md) has all four with their numbers.
 
 The plugin notices it after the fact and repairs it on the next frame, and it
 logs each one, so the rate is known rather than estimated: three in a session of

@@ -538,7 +538,16 @@ bool is_our_own_output(float value) { return matches_something_we_wrote(value); 
 // amount nobody can see. That matters, because both previous attempts failed by
 // introducing a new way for the correction to compound, and this one cannot: at
 // worst it does nothing.
-constexpr bool kSeparateFromAuthored = true;
+// OFF. Tested in game and it changed nothing, unconditional offset included.
+//
+// Which settles the question rather than leaving it open: the flip-flop is not
+// caused by the two values coinciding, or moving ours 0.004 deg away would have
+// stopped it. Something else decides, frame by frame, whether that camera gets
+// corrected, and the value is only how it becomes visible.
+//
+// Kept, switched off, with the reasoning intact -- it is the cheapest way for
+// the next attempt to know this ground has been walked.
+constexpr bool kSeparateFromAuthored = false;
 
 // A correction that changes nothing must not be recorded as if it had.
 //
@@ -548,7 +557,11 @@ constexpr bool kSeparateFromAuthored = true;
 // mistakes that camera's own value for ours for as long as the entry lives.
 // Below this threshold the write is skipped entirely: no memory of it, and no
 // change to the picture, since there was none to make.
-constexpr bool kSkipTinyCorrections = true;
+// OFF with the rest. The reasoning still looks sound -- a correction that
+// changes nothing should not be remembered as if it had -- but it made no
+// measurable difference either, and shipping an unmeasured change is how the
+// last three regressions got in.
+constexpr bool kSkipTinyCorrections = false;
 constexpr float kMinimumCorrection = 0.05f;  // degrees
 
 // Values proven to be authored: seen as an input while matching nothing we ever
@@ -948,7 +961,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // causes the flash belongs to a camera we are *not* correcting -- it never
     // reaches that site. Every structure passes through here, and matching
     // nothing in the ring is proof the value is not ours.
-    if (!matches_something_we_wrote(original)) {
+    if (kSeparateFromAuthored && !matches_something_we_wrote(original)) {
         remember_authored(original);
     }
 
