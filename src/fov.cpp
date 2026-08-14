@@ -121,9 +121,23 @@ std::atomic<int> g_clamp_logged{0};
 std::atomic<unsigned> g_clamp_census{0};
 
 // Correct inside the focal-length clamp as well as in ApplyCameraState. See the
-// long note in clamp_detour. One constant; the failure mode is a picture that is
-// too narrow.
-constexpr bool kCorrectInClamp = true;
+// long note in clamp_detour. The failure mode is a picture that is too narrow.
+//
+// OFF, as an experiment with a measured reason behind it. This site's correction
+// is what writes 39.3141 into the ring every frame -- proven by the RINGHIT
+// provenance -- and that value is the cutscene camera's authored field of view,
+// which ApplyCameraState then skips as ours. Both visible faults in that scene
+// come from that skip.
+//
+// Hiding the clamp's writes from ApplyCameraState was tried first and produced a
+// picture that was too close: the value flows back, so the ring has to stay
+// shared. That leaves not producing the value at all.
+//
+// What it gives up: this site corrects a camera one frame earlier than
+// ApplyCameraState can, which is what removed the judder at cuts. The defence
+// afterwards -- restoring our value when the game's focal limiting moves it --
+// keeps running regardless; only the correcting write is gated.
+constexpr bool kCorrectInClamp = false;
 
 // TRIED AND REVERTED. Correcting every camera state in an established cutscene
 // compounds, exactly as the original design did, and the ring did not prevent
@@ -1663,7 +1677,19 @@ void clamp_detour(std::uintptr_t camera) {
     // now including the rounding it picks up on the way. If this ever does go
     // wrong the symptom is unmistakable -- the picture becomes too narrow -- and
     // it is one constant to switch off.
-    if (kCorrectInClamp && readable && g_weight_addr != 0 && g_config.mode == Mode::Corrected) {
+    // kCorrectInClamp moved off this condition on purpose.
+    //
+    // This site does two separate jobs, and only one of them is implicated. It
+    // *corrects* -- which is what writes into the ring, and the trace proves that
+    // write is what poisons ApplyCameraState: every frame it puts 39.3141 there,
+    // and 39.3141 is the cutscene camera's authored value. It also *defends*
+    // ApplyCameraState's correction afterwards, restoring it when the game's own
+    // focal limiting moves it by a meaningful amount.
+    //
+    // Switching the constant off at the top would drop both, because `ours` is
+    // only ever set inside. So the correcting write is now the only thing gated,
+    // and the defence keeps running either way.
+    if (readable && g_weight_addr != 0 && g_config.mode == Mode::Corrected) {
         float w = 0.0f;
         std::memcpy(&w, reinterpret_cast<const void*>(g_weight_addr), sizeof(w));
 
@@ -1687,7 +1713,9 @@ void clamp_detour(std::uintptr_t camera) {
                          already_ours ? "  (already ours)" : "");
         }
 
-        if (w > 0.0f && !already_ours && before > patterns::kFovSanityMin &&
+        ours = already_ours;
+
+        if (kCorrectInClamp && w > 0.0f && !already_ours && before > patterns::kFovSanityMin &&
             before < patterns::kFovSanityMax) {
             const double k = effective_k(w, g_bar_addr);
             const double scaled = 1.0 + (k - 1.0) * static_cast<double>(g_strength.load());
