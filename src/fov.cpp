@@ -495,7 +495,16 @@ std::atomic<float> g_dst_last_ours[kMaxDestinations]{};
 // So the clamp's outputs are invisible to ApplyCameraState from here on. The
 // other direction stays: the clamp still sees everything, because it does need
 // to recognise what ApplyCameraState just wrote or it would correct it twice.
-constexpr bool kSeparateRings = true;
+// OFF. Measured: the picture came out too close, which is the compounding
+// signature, so the sharing is load-bearing in *both* directions -- the clamp's
+// corrected value evidently flows back into camera states, and without seeing it
+// in the ring, ApplyCameraState corrects it a second time.
+//
+// That is worth knowing plainly: the ring cannot be split, and the value that
+// poisons it is written by the clamp. So the way out is not to hide the clamp's
+// output but to stop producing it -- see kCorrectInClamp, which is one constant
+// away and switches off the second correction site entirely.
+constexpr bool kSeparateRings = false;
 
 // `include_clamp` is what makes it asymmetric.
 int ring_match_index(float value, bool include_clamp) {
