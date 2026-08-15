@@ -130,7 +130,8 @@ std::atomic<bool> g_weight_rising{false};
 // on one of their lines -- but together they write several thousand lines per
 // cutscene, which is a diagnostic instrument and not something to ship. Same
 // treatment as the watchpoint: left whole, switched off, one constant away.
-constexpr bool kTraceDecisions = false;
+// ON for this build: diagnostic, not a release.
+constexpr bool kTraceDecisions = true;
 
 // Correct inside the focal-length clamp as well as in ApplyCameraState. See the
 // long note in clamp_detour. The failure mode is a picture that is too narrow.
@@ -1546,6 +1547,17 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 g_screen_lines.store(0, std::memory_order_relaxed);
                 g_last_screen.store(0.0f, std::memory_order_relaxed);
                 g_ramp_trace.store(kRampTrace, std::memory_order_relaxed);
+                // The clamp census too, and this is the line the run turns on.
+                //
+                // Its budget is spent during the fade *in*, so the fade out has
+                // never had one. And the question is now precisely about this
+                // site: with no CORRECT from ApplyCameraState during a fade out,
+                // and the clamp taught to recognise that site's output, the
+                // wrong value still appears. Either this site says "already
+                // ours" and something else writes it -- a third path we have
+                // never seen -- or it does not, and the new recognition misses
+                // here too.
+                g_clamp_census.store(0, std::memory_order_relaxed);
                 logger::info("--- fade-out begins, traces reset ---");
             }
         }
