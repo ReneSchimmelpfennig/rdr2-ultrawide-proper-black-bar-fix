@@ -739,6 +739,7 @@ std::uintptr_t g_src_addr[kSourceSlots]{};
 std::atomic<float> g_src_out[kSourceSlots]{};
 std::atomic<std::size_t> g_src_next{0};
 std::atomic<unsigned long long> g_echo_skips{0};
+std::atomic<std::uintptr_t> g_chain_root{0};
 
 bool source_echoes_us(std::uintptr_t src, float value) {
     if (!kSourceEcho || src == 0) {
@@ -2099,6 +2100,17 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     remember_our_output(result, slot == kNoSlot ? -1 : static_cast<int>(slot));
     mark_carries_ours(dst);  // everything read out of here from now on is ours
     remember_source_output(src, result);
+
+    // The root of the chain, captured for the watchpoint.
+    //
+    // A correction happens only when the source carried neither a mark nor an
+    // echo of ours -- which is precisely what makes that source a root: nothing
+    // upstream of it passes through this hook. It is the one structure the taint
+    // can never cover, and the one place the fade-out jump still comes from.
+    //
+    // Its address is only knowable at runtime, so the plugin records it here for
+    // whoever wants to watch it.
+    g_chain_root.store(src, std::memory_order_relaxed);
     remember_frame_output(result);
     g_last_correct_at.store(ticks_now(), std::memory_order_relaxed);
     if (slot != kNoSlot) {
@@ -2708,6 +2720,8 @@ unsigned long long tiny_skips() { return g_tiny_skips.load(std::memory_order_rel
 unsigned long long second_writes() { return g_second_writes.load(std::memory_order_relaxed); }
 
 unsigned long long src_skips() { return g_src_skips.load(std::memory_order_relaxed); }
+
+std::uintptr_t chain_root() { return g_chain_root.load(std::memory_order_relaxed); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();

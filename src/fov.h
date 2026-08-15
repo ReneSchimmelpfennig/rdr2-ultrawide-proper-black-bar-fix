@@ -158,4 +158,9 @@ void report_destinations(std::uintptr_t module_base);
 // what they were. Each one is a float comparison that did not have to be made.
 [[nodiscard]] unsigned long long src_skips();
 
+// The address the corrected camera values come out of: the root of the copy
+// chain, and the one structure the provenance mark can never cover. Known only
+// at runtime, so it is captured as corrections happen. 0 until the first one.
+[[nodiscard]] std::uintptr_t chain_root();
+
 }  // namespace fov

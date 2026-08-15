@@ -703,6 +703,13 @@ DWORD WINAPI worker(LPVOID) {
         // project, and this answers it before anything is rewritten.
         bool wide_display_applied = false;
 
+        // Diagnostic, one shot per session. See the note further down; the
+        // watchpoint stalls this thread for its duration, so it does not belong
+        // in a build anyone plays.
+        constexpr bool kWatchChainRoot = true;
+        bool root_watched = false;
+        bool settled_seen = false;
+
         while (data) {
             if (g_request_2d_search.exchange(false)) {
                 hunt::find_known_values(data, module.base, weight, 60 * 1000);
@@ -732,6 +739,38 @@ DWORD WINAPI worker(LPVOID) {
             bars::poll_second_letterbox();
             if (bars::side_bars()) {
                 bars::set_target_aspect(true);
+            }
+
+            // Who writes the root of the camera copy chain?
+            //
+            // The last artefact left is a jump as a cutscene fades out, and
+            // everything else has been ruled out by measurement: not the focal
+            // clamp, which reports "already ours" throughout, and not a third
+            // write path -- it is ApplyCameraState all along. What is left is
+            // that the root of the chain cannot carry the provenance mark,
+            // because no write of ours ever passes through it, so recognition
+            // there falls back on the value ring, and during a fade the ring is
+            // outrun by its own drifting value.
+            //
+            // Giving the root a mark means knowing who fills it. Its address is
+            // only knowable at runtime, which is why fov::chain_root() exists.
+            //
+            // Armed on the fade-out, because that is when the interesting write
+            // happens: something puts our own corrected value in there to blend
+            // back towards gameplay. A second and a half covers a fade at any
+            // frame rate; the root is written every frame, so it will not be
+            // missed.
+            if (kWatchChainRoot && !root_watched && fov::chain_root() != 0 &&
+                is_readable(weight, sizeof(float))) {
+                const float w = read_float(weight);
+                if (settled_seen && w > 0.0f && w < 0.99f) {
+                    root_watched = true;
+                    logger::info("");
+                    logger::info("fade-out: watching the chain root 0x{:016X}", fov::chain_root());
+                    watchpoint::find_writers(fov::chain_root(), module.base, 1500);
+                } else if (w >= 0.99f) {
+                    settled_seen = true;
+                }
             }
 
             // Who computes the wrong top/bottom bar during the overlay is still
