@@ -643,6 +643,26 @@ void mark_carries_ours(std::uintptr_t address) {
     g_taint_frame[index].store(now, std::memory_order_relaxed);
 }
 
+// The mark describes what a structure currently holds, not where it lives.
+//
+// Leaving it out was the first version's mistake, and the counts said so at
+// once: 14331 skips against 1123 corrections, thirteen to one. A structure that
+// carried our value keeps the mark, the game refills it from an authored camera,
+// and we wave that through -- one uncorrected frame, which is the flash.
+//
+// A write replaces the contents, so it has to replace the mark too.
+void clear_carries_ours(std::uintptr_t address) {
+    if (address == 0) {
+        return;
+    }
+    for (std::size_t i = 0; i < kTaintSlots; ++i) {
+        if (g_taint_addr[i] == address) {
+            g_taint_frame[i].store(0, std::memory_order_relaxed);
+            return;
+        }
+    }
+}
+
 void forget_all_taint() {
     for (std::size_t i = 0; i < kTaintSlots; ++i) {
         g_taint_addr[i] = 0;
@@ -1315,8 +1335,12 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // Provenance first, and unconditionally: every call spreads the taint, so a
     // link we skip still carries it to the next one.
     const bool src_carries_ours = kSrcProvenance && carries_ours(src);
-    if (src_carries_ours) {
-        mark_carries_ours(dst);
+    if (kSrcProvenance) {
+        if (src_carries_ours) {
+            mark_carries_ours(dst);
+        } else {
+            clear_carries_ours(dst);  // this write brought an authored value in
+        }
     }
 
     // Is *this* destination the one being rendered right now?
