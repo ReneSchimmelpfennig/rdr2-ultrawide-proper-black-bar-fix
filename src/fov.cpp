@@ -130,7 +130,8 @@ std::atomic<bool> g_weight_rising{false};
 // on one of their lines -- but together they write several thousand lines per
 // cutscene, which is a diagnostic instrument and not something to ship. Same
 // treatment as the watchpoint: left whole, switched off, one constant away.
-constexpr bool kTraceDecisions = false;
+// ON: the fade-out has never been traced with kSourceEcho running.
+constexpr bool kTraceDecisions = true;
 
 // Correct inside the focal-length clamp as well as in ApplyCameraState. See the
 // long note in clamp_detour. The failure mode is a picture that is too narrow.

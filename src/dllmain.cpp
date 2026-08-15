@@ -706,7 +706,7 @@ DWORD WINAPI worker(LPVOID) {
         // Diagnostic, one shot per session. See the note further down; the
         // watchpoint stalls this thread for its duration, so it does not belong
         // in a build anyone plays.
-        constexpr bool kWatchChainRoot = true;
+        constexpr bool kWatchChainRoot = false;
         bool root_watched = false;
         bool settled_seen = false;
 
