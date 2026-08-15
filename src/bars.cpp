@@ -96,6 +96,11 @@ std::atomic<bool> g_side_bars{false};
 std::atomic<int> g_side_logged{0};
 std::atomic<int> g_after_logged{0};
 std::atomic<int> g_calls_this_frame{0};
+std::atomic<int> g_blank_logged{0};
+
+// Blank the bar values whenever the bars are supposed to be hidden, not only on
+// wide displays. Covers the drawing path that ignores the enable byte.
+constexpr bool kBlankWhenHidden = true;
 float g_last_weight_seen = -1.0f;
 
 float read_float_at(std::uintptr_t address) {
@@ -143,6 +148,44 @@ void update_detour() {
 // values are both final and still ours is the entry to the drawing itself.
 void draw_detour() {
     g_draw_calls.fetch_add(1, std::memory_order_relaxed);
+
+    // Bars that ignore the enable byte.
+    //
+    // The scene after the intro video switches the letterbox on abruptly --
+    // weight 0 to 1 with no ramp -- and puts up side bars on a 21:9 display.
+    // Measured while they were on screen:
+    //
+    //   letterbox: weight 1.0000  sides 0.127907  target 2.35000  enable 0x00
+    //
+    // enable is 0x00, which is our patch, working. So this drawing does not
+    // consult the byte at all: a second path, and the one thing the patch can
+    // never reach.
+    //
+    // The values it reads are reachable, though, and blanking them here is the
+    // same move that puts the side bars on screen correctly for 32:9 -- same
+    // buffer, same moment, and we are the last to touch it before the read.
+    //
+    // Not zero: the update ends with `if (bar == 0.0) bar = 1.0`, and a bar of
+    // 1.0 covers the screen. 6.25e-5 is what the game itself computes from a
+    // target of 1.778, which is 0.09 px at 1440.
+    if (kBlankWhenHidden && g_hidden && !g_side_bars.load(std::memory_order_relaxed) &&
+        g_anchor != 0) {
+        const float weight = read_float_at(g_anchor + patterns::letterbox::kWeight);
+        if (weight > 0.0f) {
+            constexpr double kInvisible = 6.25e-5;
+            const float hair = static_cast<float>(kInvisible * weight);
+            const float was235 = read_float_at(g_anchor + patterns::kDrawnBar235);
+            const float wasSides = read_float_at(g_anchor + patterns::kDrawnBarDisplay);
+            write_float_at(g_anchor + patterns::kDrawnBar235, hair);
+            write_float_at(g_anchor + patterns::kDrawnBarDisplay, hair);
+            if (g_blank_logged.fetch_add(1, std::memory_order_relaxed) < 6) {
+                logger::info("bars: drawn with enable 0 -- blanking  top/bottom {:.6f}"
+                             "  sides {:.6f}  (weight {:.4f})",
+                             was235, wasSides, weight);
+            }
+        }
+    }
+
     if (g_side_bars.load(std::memory_order_relaxed) && g_anchor != 0) {
         const std::uintptr_t weight_addr = g_anchor + patterns::letterbox::kWeight;
         const std::uintptr_t bar235 = g_anchor + patterns::kDrawnBar235;
