@@ -1527,8 +1527,19 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // Reset at each cutscene boundary, for the reason the screen trace is:
         // reaching the interesting scene takes minutes of riding, and without a
         // reset the budget is gone before it starts.
-        if (weight > 0.0f && weight < kSettledWeight &&
-            g_ramp_trace.load(std::memory_order_relaxed) > 0) {
+        // Not "while the bars are moving" any more, but "from the start of the
+        // cutscene until the budget runs out".
+        //
+        // The old condition stopped the trace the instant the weight reached
+        // full -- which is precisely when the remaining flash happens. Twice now
+        // the frame before it was missing from the log, and both times only the
+        // lines the swing itself armed afterwards came back, which is a frame too
+        // late to see the cause.
+        //
+        // 8000 lines at two dozen calls a frame is about 330 frames, three and a
+        // half seconds from the first frame of the cutscene. The settle point is
+        // comfortably inside that.
+        if (weight > 0.0f && g_ramp_trace.load(std::memory_order_relaxed) > 0) {
             g_ramp_trace.fetch_sub(1, std::memory_order_relaxed);
             g_flip_budget.store(std::max(g_flip_budget.load(std::memory_order_relaxed), 1),
                                 std::memory_order_relaxed);
