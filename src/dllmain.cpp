@@ -707,6 +707,12 @@ DWORD WINAPI worker(LPVOID) {
         // watchpoint stalls this thread for its duration, so it does not belong
         // in a build anyone plays.
         constexpr bool kWatchChainRoot = false;
+
+        // Cheap enough to leave in while the intro question is open: one line a
+        // second for three minutes, then silent for the rest of the session.
+        constexpr bool kWatchIntroBars = true;
+        const DWORD started_at = GetTickCount();
+        DWORD last_intro_sample = 0;
         bool root_watched = false;
         bool settled_seen = false;
 
@@ -739,6 +745,37 @@ DWORD WINAPI worker(LPVOID) {
             bars::poll_second_letterbox();
             if (bars::side_bars()) {
                 bars::set_target_aspect(true);
+            }
+
+            // Is the letterbox involved in the intro's side bars at all?
+            //
+            // Bars appear left and right at the start of the rendered scene that
+            // follows the intro video, and vanish without any animation. Nothing
+            // in a whole session's log pointed at the letterbox: the patch held,
+            // the second letterbox never once read non-zero, and the intro
+            // window contains no bar-related line at all. But absence in a log
+            // that was not watching is not evidence.
+            //
+            // So watch, cheaply: the whole letterbox state once a second for the
+            // first three minutes, which covers the intro from a cold start.
+            // A hundred and eighty lines, and it settles whether this subsystem
+            // is even awake when the bars are on screen.
+            if (kWatchIntroBars && g_letterbox_anchor != 0 &&
+                GetTickCount() - started_at < 3 * 60 * 1000 &&
+                GetTickCount() - last_intro_sample >= 1000) {
+                last_intro_sample = GetTickCount();
+                const std::uintptr_t weight_addr =
+                    g_letterbox_anchor + patterns::letterbox::kWeight;
+                const std::uintptr_t bar235 = g_letterbox_anchor + patterns::kDrawnBar235;
+                const std::uintptr_t sides = g_letterbox_anchor + patterns::kDrawnBarDisplay;
+                const std::uintptr_t target =
+                    g_letterbox_anchor + patterns::letterbox::kTargetAspect;
+                if (is_readable(weight_addr, sizeof(float))) {
+                    logger::info("intro watch: weight {:.4f}  top/bottom {:.6f}  sides {:.6f}"
+                                 "  target {:.5f}",
+                                 read_float(weight_addr), read_float(bar235), read_float(sides),
+                                 read_float(target));
+                }
             }
 
             // Who writes the root of the camera copy chain?

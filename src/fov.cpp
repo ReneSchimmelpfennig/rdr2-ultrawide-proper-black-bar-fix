@@ -530,6 +530,10 @@ std::atomic<float> g_dst_prev_in[kMaxDestinations]{};
 // What we ourselves last wrote into each slot. The positive half of the test.
 std::atomic<float> g_dst_last_ours[kMaxDestinations]{};
 
+// And the one before that, which is what the shader constant can be held
+// against: it lags a frame, so the current write is not yet visible in it.
+std::atomic<float> g_dst_ours_previous[kMaxDestinations]{};
+
 // One correction per structure per frame, timed rather than valued.
 //
 // The ramp trace shows the rendered camera corrected twice inside a single
@@ -1453,6 +1457,7 @@ std::size_t record_destination(std::uintptr_t dst) {
         g_dst_last_final[slot].store(0.0f, std::memory_order_relaxed);
         g_dst_prev_in[slot].store(0.0f, std::memory_order_relaxed);
         g_dst_last_ours[slot].store(0.0f, std::memory_order_relaxed);
+        g_dst_ours_previous[slot].store(0.0f, std::memory_order_relaxed);
         g_dst_last_correct_at[slot].store(0, std::memory_order_relaxed);
         if (g_render_slot.load(std::memory_order_relaxed) == slot) {
             g_render_slot.store(static_cast<std::size_t>(-1), std::memory_order_relaxed);
@@ -1687,8 +1692,24 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // rendered-camera test picks the wrong one for a frame at such a cut, we
         // write a correction twenty degrees off and the picture hops. Each line
         // here is one such frame.
-        if (std::strcmp(decision, "CORRECT") == 0) {
-            const float ours = g_last_our_output.exchange(final_value, std::memory_order_relaxed);
+        // CORRECTED: per camera, and only for the one being rendered.
+        //
+        // The old form compared a single global "last correction" against the
+        // shader constant, and a cutscene cuts between cameras -- so it fired on
+        // every shot change whether or not anything was wrong. A long session
+        // produced 200 lines against a handful of flashes actually seen. A
+        // counter that cries wolf is worse than none, because the next
+        // investigation starts by trusting it.
+        //
+        // Now: only when this structure is the one believed to be rendered, and
+        // against what we wrote into *this* structure last time. Both sides of
+        // the comparison then belong to the same camera, which is what the line
+        // claims to be about.
+        const bool judging_rendered_camera =
+            slot != kNoSlot && g_render_slot.load(std::memory_order_relaxed) == slot;
+        if (std::strcmp(decision, "CORRECT") == 0 && judging_rendered_camera) {
+            g_last_our_output.store(final_value, std::memory_order_relaxed);
+            const float ours = g_dst_ours_previous[slot].load(std::memory_order_relaxed);
             if (ours != 0.0f && std::fabs(shader_now - ours) > kRenderedMiss &&
                 g_miss_lines.fetch_add(1, std::memory_order_relaxed) < kMaxMissLines) {
                 logger::info("MISS  w {:.4f}  slot {:<3} we wrote {:8.4f}, the picture shows"
@@ -2142,6 +2163,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     remember_frame_output(result);
     g_last_correct_at.store(ticks_now(), std::memory_order_relaxed);
     if (slot != kNoSlot) {
+        g_dst_ours_previous[slot].store(g_dst_last_ours[slot].load(std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
         g_dst_last_ours[slot].store(result, std::memory_order_relaxed);
         g_dst_last_correct_at[slot].store(ticks_now(), std::memory_order_relaxed);
     }
