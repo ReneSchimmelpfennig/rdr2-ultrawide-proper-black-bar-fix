@@ -101,6 +101,9 @@ std::atomic<int> g_blank_logged{0};
 // Blank the bar values whenever the bars are supposed to be hidden, not only on
 // wide displays. Covers the drawing path that ignores the enable byte.
 constexpr bool kBlankWhenHidden = true;
+
+// Diagnostic: skip the letterbox drawing outright while the bars are hidden.
+constexpr bool kSkipDrawWhenHidden = true;
 float g_last_weight_seen = -1.0f;
 
 float read_float_at(std::uintptr_t address) {
@@ -194,6 +197,22 @@ void draw_detour() {
                 logger::info("bars: drawn with enable 0 -- blanking  top/bottom {:.6f}"
                              "  sides {:.6f}  (weight {:.4f})",
                              was235, wasSides, weight);
+            }
+
+            // One line that decides where the bars come from.
+            //
+            // Blanking both copies of the geometry changed nothing, so this
+            // drawing does not take it from the letterbox struct at all. Rather
+            // than guess at a third location, skip the call: if the bars are
+            // drawn by this function they disappear, and if they survive it is
+            // another function entirely and a read watchpoint is the next step.
+            //
+            // Safe as an experiment, because it only applies when the bars are
+            // meant to be hidden. If something else disappears with them, that
+            // is worth knowing too -- it would mean this function draws more
+            // than the letterbox.
+            if (kSkipDrawWhenHidden) {
+                return;  // deliberately not calling the original
             }
         }
     }
