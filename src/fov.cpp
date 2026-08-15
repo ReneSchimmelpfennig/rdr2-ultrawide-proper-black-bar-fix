@@ -2247,8 +2247,31 @@ void clamp_detour(std::uintptr_t camera) {
         const float our_last = g_clamp_last_ours[seat].load(std::memory_order_relaxed);
         // true: the clamp must see everything, including what ApplyCameraState
         // wrote a moment ago, or it corrects that value a second time.
+        // The one value that matters here, compared generously because it is one
+        // value and not a ring.
+        //
+        // This site's input is not its own last output -- ApplyCameraState
+        // rewrites the camera state every frame, so what arrives here is *that*
+        // correction. Recognising it is what the global ring is for, and the
+        // measured fade-out shows it missing by a hair: the clamp saw 39.3194
+        // while ApplyCameraState had just written 39.3190, which is 1e-5 apart,
+        // exactly the ring's tolerance. It then corrected our own value a second
+        // time, and 32.375 went down the chain.
+        //
+        // Widening the ring is not available: measured, it swallows values that
+        // genuinely need correcting and brings back a worse fault. But the ring
+        // is thirty-two entries spanning half a second, and this comparison
+        // needs exactly one -- the correction written moments ago. Against a
+        // single, current value a window fifty times wider is still nowhere near
+        // an authored one, which sits a quarter of the value away.
+        constexpr float kLastOutputWindow = 5e-4f;
+        const float last_applied = g_last_our_output.load(std::memory_order_relaxed);
+        const bool echoes_apply_site =
+            last_applied != 0.0f &&
+            std::fabs(before - last_applied) <= std::fabs(last_applied) * kLastOutputWindow;
+
         const bool already_ours =
-            is_our_own_output_for(before, previous_input, our_last, true);
+            echoes_apply_site || is_our_own_output_for(before, previous_input, our_last, true);
 
         // Counted only in cutscenes. It used to increment on every call, so the
         // budget of 400 was spent during gameplay and not one CLAMP line survived
