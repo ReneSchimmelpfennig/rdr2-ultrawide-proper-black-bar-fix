@@ -765,9 +765,19 @@ DWORD WINAPI worker(LPVOID) {
                 const float w = read_float(weight);
                 if (settled_seen && w > 0.0f && w < 0.99f) {
                     root_watched = true;
+                    // The field, not the structure.
+                    //
+                    // The first attempt watched the base pointer and caught
+                    // nothing, which was exactly right of it: the value that
+                    // changes sits at +0x60, ninety-six bytes further on. A
+                    // structure base is not written every frame; the field is.
+                    const std::uintptr_t field =
+                        fov::chain_root() + static_cast<std::uintptr_t>(patterns::kCameraStateFov);
                     logger::info("");
-                    logger::info("fade-out: watching the chain root 0x{:016X}", fov::chain_root());
-                    watchpoint::find_writers(fov::chain_root(), module.base, 1500);
+                    logger::info("fade-out: watching the chain root's fov at 0x{:016X}"
+                                 "  (struct 0x{:016X})",
+                                 field, fov::chain_root());
+                    watchpoint::find_writers(field, module.base, 1500);
                 } else if (w >= 0.99f) {
                     settled_seen = true;
                 }
