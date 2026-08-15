@@ -130,8 +130,7 @@ std::atomic<bool> g_weight_rising{false};
 // on one of their lines -- but together they write several thousand lines per
 // cutscene, which is a diagnostic instrument and not something to ship. Same
 // treatment as the watchpoint: left whole, switched off, one constant away.
-// ON for this build: a diagnostic, not a release. See the fade-out note below.
-constexpr bool kTraceDecisions = true;
+constexpr bool kTraceDecisions = false;
 
 // Correct inside the focal-length clamp as well as in ApplyCameraState. See the
 // long note in clamp_detour. The failure mode is a picture that is too narrow.
@@ -721,7 +720,13 @@ void forget_all_taint() {
 // then offers that value back, it is an echo of our own work. Scoping it to one
 // address is what makes a generous window safe -- an authored value coming out
 // of this root sits degrees away from our output, not thousandths.
-constexpr bool kSourceEcho = true;
+// OFF with the clamp change it was tested alongside.
+//
+// It demonstrably works -- the log shows the chain root skipped frame after
+// frame through a whole fade -- but it never changed the picture, and shipping
+// two changes on one measurement is how the last regression got in. It goes back
+// on when there is a run that isolates it.
+constexpr bool kSourceEcho = false;
 constexpr std::size_t kSourceSlots = 64;
 constexpr float kEchoWindow = 1e-3f;
 std::uintptr_t g_src_addr[kSourceSlots]{};
@@ -2269,8 +2274,17 @@ void clamp_detour(std::uintptr_t camera) {
         // What it is here for is reaching a camera one frame before
         // ApplyCameraState can, which matters when a shot *arrives* -- the manual
         // cinematic camera needed exactly that. Nothing arrives on the way out.
+        // OFF: measured, and it cost more than it bought. The fade-out jump
+        // stayed and the manual cinematic camera started flickering again, so
+        // this site is doing something during a falling ramp that is still
+        // needed. The arithmetic above stands -- 32.375 really is our own value
+        // corrected a second time here -- but the cure is not withholding the
+        // correction, it is teaching this site the provenance rule that
+        // ApplyCameraState already has.
+        constexpr bool kClampRisingOnly = false;
+
         const bool ramping = w > 0.0f && w < kSettledWeight;
-        const bool rising = g_weight_rising.load(std::memory_order_relaxed);
+        const bool rising = !kClampRisingOnly || g_weight_rising.load(std::memory_order_relaxed);
         const bool may_correct =
             kCorrectInClamp && ((ramping && rising) || !kClampCorrectsOnlyWhileRamping);
 
