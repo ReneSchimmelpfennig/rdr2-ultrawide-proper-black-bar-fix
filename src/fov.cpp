@@ -130,8 +130,7 @@ std::atomic<bool> g_weight_rising{false};
 // on one of their lines -- but together they write several thousand lines per
 // cutscene, which is a diagnostic instrument and not something to ship. Same
 // treatment as the watchpoint: left whole, switched off, one constant away.
-// ON for this build: diagnostic, not a release.
-constexpr bool kTraceDecisions = true;
+constexpr bool kTraceDecisions = false;
 
 // Correct inside the focal-length clamp as well as in ApplyCameraState. See the
 // long note in clamp_detour. The failure mode is a picture that is too narrow.
@@ -936,7 +935,21 @@ bool matches_something_we_wrote(float value, bool include_clamp) {
 // an append -- a dozen structures carry the same value each frame, and appending
 // would flood all thirty-two entries with one number and evict the other
 // cameras' history.
+// OFF. Measured: the fade-out jump stayed and a new flash appeared on the way
+// *in*, where nothing had been wrong. Following the value keeps the entry alive
+// but also lets it wander onto something that needed correcting -- on the way in
+// we write a fresh correction every frame, so an entry that drifts is an entry
+// that no longer stands for anything in particular.
+//
+// The diagnosis behind it holds and is worth keeping: during a fade-out the ring
+// is outrun by its own value, 39.3190 stored against 39.3200 arriving. The cure
+// is not to let the entry drift.
+constexpr bool kRefreshRingEntry = false;
+
 void refresh_ring_entry(float value, bool include_clamp) {
+    if (!kRefreshRingEntry) {
+        return;
+    }
     const int hit = ring_match_index(value, include_clamp);
     if (hit < 0) {
         return;
