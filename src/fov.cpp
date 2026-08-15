@@ -916,6 +916,36 @@ bool matches_something_we_wrote(float value, bool include_clamp) {
     return ring_match_index(value, include_clamp) >= 0;
 }
 
+// Let the entry follow the value it stands for.
+//
+// The fade-out jump comes from the ring being outrun by its own value. While a
+// scene fades we write nothing new -- every call is recognised and skipped -- so
+// the ring keeps the number from the settled phase while the game blends the
+// real one a little further every frame:
+//
+//   16:16:44.360  skip-own slot 29  in 39.3194   recognised
+//   16:16:44.380  CORRECT  slot 29  in 39.3200   not recognised -> 32.4782
+//
+// 39.3200 against the stored 39.3190 is 2.5e-5 relative, outside the window. The
+// value never changed hands, it only drifted, and after enough frames of drift
+// the plugin corrects its own output for the second time.
+//
+// Updating the matching entry in place fixes that without touching the tolerance
+// and without growing the ring: the entry tracks the drift, so the distance to
+// be bridged stays one frame's worth instead of accumulating. Deliberately not
+// an append -- a dozen structures carry the same value each frame, and appending
+// would flood all thirty-two entries with one number and evict the other
+// cameras' history.
+void refresh_ring_entry(float value, bool include_clamp) {
+    const int hit = ring_match_index(value, include_clamp);
+    if (hit < 0) {
+        return;
+    }
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    g_our_outputs[hit].store(bits, std::memory_order_relaxed);
+}
+
 // Reports the entry a value matched: its value, its age, and the slot it was
 // written into.
 void log_ring_hit(const char* where, int slot, float value, float previous_input, int hit) {
@@ -1862,6 +1892,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                                   ? g_dst_last_ours[slot].load(std::memory_order_relaxed)
                                   : 0.0f,
                               false)) {
+        refresh_ring_entry(original, false);
         finish(original, "skip-own");
         return;
     }
