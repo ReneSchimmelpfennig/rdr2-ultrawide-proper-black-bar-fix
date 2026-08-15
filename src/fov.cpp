@@ -120,6 +120,14 @@ std::atomic<unsigned long long> g_clamp_reverts{0};
 std::atomic<int> g_clamp_logged{0};
 std::atomic<unsigned> g_clamp_census{0};
 
+// The decision traces, off for release.
+//
+// FLIP and RINGHIT are what finally solved this -- every value-based theory died
+// on one of their lines -- but together they write several thousand lines per
+// cutscene, which is a diagnostic instrument and not something to ship. Same
+// treatment as the watchpoint: left whole, switched off, one constant away.
+constexpr bool kTraceDecisions = false;
+
 // Correct inside the focal-length clamp as well as in ApplyCameraState. See the
 // long note in clamp_detour. The failure mode is a picture that is too narrow.
 //
@@ -830,7 +838,7 @@ bool matches_something_we_wrote(float value, bool include_clamp) {
 // Reports the entry a value matched: its value, its age, and the slot it was
 // written into.
 void log_ring_hit(const char* where, int slot, float value, float previous_input, int hit) {
-    if (hit < 0) {
+    if (hit < 0 || !kTraceDecisions) {
         return;
     }
     const std::uint32_t bits = g_our_outputs[hit].load(std::memory_order_relaxed);
@@ -1522,7 +1530,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // every call is logged for a while, both the corrected and the skipped,
         // with everything that feeds the decision. Two consecutive frames of one
         // flip, side by side, is the measurement that has been missing.
-        if (weight > 0.0f && shader_now != 0.0f) {
+        if (kTraceDecisions && weight > 0.0f && shader_now != 0.0f) {
             const float last = g_flip_last_shader.exchange(shader_now, std::memory_order_relaxed);
             if (last != 0.0f && std::fabs(shader_now - last) > 1.0f) {
                 g_flip_budget.store(kFlipTrace, std::memory_order_relaxed);
@@ -1550,7 +1558,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // 8000 lines at two dozen calls a frame is about 330 frames, three and a
         // half seconds from the first frame of the cutscene. The settle point is
         // comfortably inside that.
-        if (weight > 0.0f && g_ramp_trace.load(std::memory_order_relaxed) > 0) {
+        if (kTraceDecisions && weight > 0.0f && g_ramp_trace.load(std::memory_order_relaxed) > 0) {
             g_ramp_trace.fetch_sub(1, std::memory_order_relaxed);
             g_flip_budget.store(std::max(g_flip_budget.load(std::memory_order_relaxed), 1),
                                 std::memory_order_relaxed);
