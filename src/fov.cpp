@@ -120,6 +120,10 @@ std::atomic<unsigned long long> g_clamp_reverts{0};
 std::atomic<int> g_clamp_logged{0};
 std::atomic<unsigned> g_clamp_census{0};
 
+// Which way the letterbox is moving. Fading in and fading out are not the same
+// situation, and the focal clamp only belongs in the first.
+std::atomic<bool> g_weight_rising{false};
+
 // The decision traces, off for release.
 //
 // FLIP and RINGHIT are what finally solved this -- every value-based theory died
@@ -1513,6 +1517,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // whatever happened before it.
         {
             const float previous_weight = g_prev_weight.exchange(weight, std::memory_order_relaxed);
+            g_weight_rising.store(weight > previous_weight, std::memory_order_relaxed);
             if (weight > 0.0f && previous_weight <= 0.0f) {
                 g_screen_lines.store(0, std::memory_order_relaxed);
                 g_last_screen.store(0.0f, std::memory_order_relaxed);
@@ -2251,8 +2256,23 @@ void clamp_detour(std::uintptr_t camera) {
 
         ours = already_ours;
 
+        // Fading in only, not fading out.
+        //
+        // "While the bars are moving" turned out to include the fade-out, and
+        // there this site is the whole remaining bug. During one measured fade
+        // there was not a single CORRECT from ApplyCameraState, yet 32.3756
+        // travelled down the chain -- and at w = 0.7331 the blend factor is
+        // 0.81247, which turns our own 39.3194 into exactly 32.375. This site
+        // corrected its own output, because its "already ours" test is the value
+        // ring and misses by the same hair as everywhere else.
+        //
+        // What it is here for is reaching a camera one frame before
+        // ApplyCameraState can, which matters when a shot *arrives* -- the manual
+        // cinematic camera needed exactly that. Nothing arrives on the way out.
         const bool ramping = w > 0.0f && w < kSettledWeight;
-        const bool may_correct = kCorrectInClamp && (ramping || !kClampCorrectsOnlyWhileRamping);
+        const bool rising = g_weight_rising.load(std::memory_order_relaxed);
+        const bool may_correct =
+            kCorrectInClamp && ((ramping && rising) || !kClampCorrectsOnlyWhileRamping);
 
         if (may_correct && w > 0.0f && !already_ours && before > patterns::kFovSanityMin &&
             before < patterns::kFovSanityMax) {
