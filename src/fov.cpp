@@ -690,6 +690,76 @@ void forget_all_taint() {
     }
 }
 
+// The one hole the taint cannot cover: the root of the chain.
+//
+// Every structure in the chain is a destination at some point, so it can be
+// marked and, when an authored value lands in it, unmarked. The root never is.
+// It is only ever a source, so no write of ours ever passes through it, and it
+// can never carry a mark.
+//
+// That matters at the fade-out, and the log shows it exactly:
+//
+//   CORRECT slot 29  dst 0x01F25D674A50  src 0x01F25D674980  w 0.4762
+//                    in 39.3194 -> 34.8414
+//
+// The game feeds our own corrected value back into the root to blend from the
+// shot the cutscene ended on towards gameplay -- 39.3194 against the 39.3190 we
+// wrote. Unmarked, so it reads as authored, so it is corrected a second time.
+// The value ring should have caught it, and missed by a hair: 0.0004 apart is
+// 1e-5 relative, exactly its tolerance.
+//
+// Marking the root instead is not an option. Nothing ever writes to it through
+// this hook, so the mark could never be cleared, and every correction from it
+// would be skipped forever.
+//
+// What works is the shape that already worked for the per-frame set: remember,
+// per source, the value we last produced *from that source*. If the same source
+// then offers that value back, it is an echo of our own work. Scoping it to one
+// address is what makes a generous window safe -- an authored value coming out
+// of this root sits degrees away from our output, not thousandths.
+constexpr bool kSourceEcho = true;
+constexpr std::size_t kSourceSlots = 64;
+constexpr float kEchoWindow = 1e-3f;
+std::uintptr_t g_src_addr[kSourceSlots]{};
+std::atomic<float> g_src_out[kSourceSlots]{};
+std::atomic<std::size_t> g_src_next{0};
+std::atomic<unsigned long long> g_echo_skips{0};
+
+bool source_echoes_us(std::uintptr_t src, float value) {
+    if (!kSourceEcho || src == 0) {
+        return false;
+    }
+    for (std::size_t i = 0; i < kSourceSlots; ++i) {
+        if (g_src_addr[i] == src) {
+            const float ours = g_src_out[i].load(std::memory_order_relaxed);
+            return ours != 0.0f && std::fabs(value - ours) <= std::fabs(ours) * kEchoWindow;
+        }
+    }
+    return false;
+}
+
+void remember_source_output(std::uintptr_t src, float value) {
+    if (src == 0) {
+        return;
+    }
+    for (std::size_t i = 0; i < kSourceSlots; ++i) {
+        if (g_src_addr[i] == src) {
+            g_src_out[i].store(value, std::memory_order_relaxed);
+            return;
+        }
+    }
+    const std::size_t index = g_src_next.fetch_add(1, std::memory_order_relaxed) % kSourceSlots;
+    g_src_addr[index] = src;
+    g_src_out[index].store(value, std::memory_order_relaxed);
+}
+
+void forget_source_outputs() {
+    for (std::size_t i = 0; i < kSourceSlots; ++i) {
+        g_src_addr[i] = 0;
+        g_src_out[i].store(0.0f, std::memory_order_relaxed);
+    }
+}
+
 // What we have written in the frame currently in progress.
 //
 // The per-slot rule was not enough, and the log says exactly why: in the frame
@@ -1756,6 +1826,14 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         return;
     }
 
+    // Or it is the root handing our own output back to us.
+    if (source_echoes_us(src, original)) {
+        g_echo_skips.fetch_add(1, std::memory_order_relaxed);
+        mark_carries_ours(dst);  // it is ours, so the chain below it is too
+        finish(original, "skip-echo");
+        return;
+    }
+
     // false: the clamp's own outputs do not count as ours here. See kSeparateRings.
     if (is_our_own_output_for(original, previous_input,
                               slot != kNoSlot
@@ -1818,7 +1896,9 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 for (std::size_t i = 0; i < kOutputRing; ++i) {
                     g_our_outputs[i].store(0, std::memory_order_relaxed);
                 }
-                forget_all_taint();  // nothing from the last cutscene is ours any more
+                forget_all_taint();       // nothing from the last cutscene is ours any more
+
+                forget_source_outputs();
                 finish(original, "gameplay");  // leave the camera exactly as authored
                 return;
             }
@@ -1946,6 +2026,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // to hold what we wrote, not what the game wrote.
     remember_our_output(result, slot == kNoSlot ? -1 : static_cast<int>(slot));
     mark_carries_ours(dst);  // everything read out of here from now on is ours
+    remember_source_output(src, result);
     remember_frame_output(result);
     g_last_correct_at.store(ticks_now(), std::memory_order_relaxed);
     if (slot != kNoSlot) {
