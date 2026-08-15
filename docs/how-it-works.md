@@ -263,6 +263,46 @@ Three details each cost a build, and each is load-bearing:
 With that in place the transition into a cutscene is clean, and the manual
 cinematic camera in free roam no longer flickers after its cut.
 
+### The root of the chain, and what it still costs
+
+One structure can never carry the taint: the root. Every other link is a
+destination at some point, so it can be marked and unmarked; the root is only
+ever a source, so no write of ours passes through it.
+
+That is where the ring has to do the work alone, and during a fade it loses.
+Nothing new is written while a scene fades — every call is recognised and
+skipped — so the ring keeps the number from the settled phase while the game
+blends the real one a little further every frame:
+
+```
+16:16:44.360  skip-own slot 29  in 39.3194   recognised
+16:16:44.380  CORRECT  slot 29  in 39.3200   not recognised -> 32.4782
+```
+
+39.3200 against the stored 39.3190 is 2.5e-5 relative, outside the window. The
+value never changed hands; it only drifted.
+
+Two cures were measured. **Letting the ring entry follow the value** fixed
+nothing and introduced a flash on the way *in*, because an entry that drifts no
+longer stands for anything in particular. **Remembering, per source, the value we
+last produced from it** — `kSourceEcho` — removed the jump on the way in and left
+everything else intact.
+
+The jump on the way *out* survives both. What is now certain about it:
+
+- the focal clamp is not the cause. It reports `(already ours)` throughout a
+  measured fade and does not correct.
+- there is no third write path. It is `ApplyCameraState` throughout; the earlier
+  runs simply had no budget left at that moment.
+- restricting the clamp to a rising ramp is not the cure either: it left the jump
+  and brought back a flicker on the manual cinematic camera, which is how that
+  flicker was finally attributed.
+
+The remaining idea is the expensive one: stop deciding on the value at all during
+a fade, which means giving the root a mark, which means finding whoever writes it.
+A write watchpoint on that address would say, and if it turns out to be a generic
+copy — as the letterbox buffer copy did — that path ends there too.
+
 ### Still open: the sustained jump at a cut inside the ramp
 
 One cutscene shows two hard jumps rather than a flash, and the log says they are
