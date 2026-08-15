@@ -176,8 +176,20 @@ void draw_detour() {
             const float hair = static_cast<float>(kInvisible * weight);
             const float was235 = read_float_at(g_anchor + patterns::kDrawnBar235);
             const float wasSides = read_float_at(g_anchor + patterns::kDrawnBarDisplay);
+
+            // Both copies, because blanking one was measured not to be enough.
+            //
+            // The drawn copy at +0x24/+0x28 is what every other part of this
+            // plugin writes, and the log proves the write lands -- the values
+            // alternate between the game's 0.127907 and our 0.000063 all the way
+            // through the scene. The bars stay on screen regardless, so this
+            // path reads its geometry somewhere else. The first copy at
+            // +0x04/+0x08 is the only other place it can plausibly be, and
+            // costs two more stores to rule in or out.
             write_float_at(g_anchor + patterns::kDrawnBar235, hair);
             write_float_at(g_anchor + patterns::kDrawnBarDisplay, hair);
+            write_float_at(g_anchor + patterns::letterbox::kBarFraction235, hair);
+            write_float_at(g_anchor + patterns::letterbox::kBarFractionDisplay, hair);
             if (g_blank_logged.fetch_add(1, std::memory_order_relaxed) < 6) {
                 logger::info("bars: drawn with enable 0 -- blanking  top/bottom {:.6f}"
                              "  sides {:.6f}  (weight {:.4f})",
