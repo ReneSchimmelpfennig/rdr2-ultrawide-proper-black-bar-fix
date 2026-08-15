@@ -298,10 +298,55 @@ The jump on the way *out* survives both. What is now certain about it:
   and brought back a flicker on the manual cinematic camera, which is how that
   flicker was finally attributed.
 
-The remaining idea is the expensive one: stop deciding on the value at all during
-a fade, which means giving the root a mark, which means finding whoever writes it.
-A write watchpoint on that address would say, and if it turns out to be a generic
-copy — as the letterbox buffer copy did — that path ends there too.
+That watchpoint was armed, twice. The first attempt watched the structure base
+and caught nothing, correctly — a base pointer is not written every frame, the
+field at `+0x60` is. The second watched the field and also caught nothing, which
+means either the copy interpolates rather than copies, or the root recorded
+during the settled phase was no longer the one in use by the time the fade
+started. The path is not exhausted, but it is not cheap either.
+
+What did work was smaller. `kSourceEcho` — remembering, per source, the value we
+last produced from it — took the fade-out jump from **6.99° to 1.12°** and
+removed the fade-in jump entirely. The rest came from the focal clamp, and from a
+reference of ours that went stale:
+
+```
+skip-echo slot 29  in 39.3393                    our value, left alone
+CLAMP w 0.1207     fov 39.3393                   no "(already ours)"
+skip-src  slot 40  src <slot 29's dst>  38.2184  the clamp had corrected it
+```
+
+At w = 0.1207 the blend factor is 0.96912, which turns 39.3393 into 38.23. The
+clamp compares against the last value the other site *wrote*, and during a fade
+nothing is written — every call is recognised and skipped — so the reference kept
+the number from the settled phase, 5.2e-4 away and just outside its window.
+
+Recognising a value as ours is as good a reason to remember it as writing one, so
+that reference now updates on both. **0.78°** is what is left.
+
+Note what could not be reused here: the ring. Letting *its* entries follow the
+value was measured and broke the fade in, because a history has to stay stable.
+A single "the value currently in flight" is a different thing and may drift.
+
+### Still open: one frame at a camera change
+
+What remains is not the double correction any more. It is the rendered-camera
+test lagging by a frame:
+
+```
+FLIP skip-not slot 29  in 37.8000  prev 51.2820  shader 42.7291  rendered no
+```
+
+A new camera arrives with its authored 37.8, the shader constant still carries
+the old one, so the test does not recognise it and the frame goes out
+uncorrected. It shows as a flash exactly when the two fields of view differ a
+lot — 51.3 against 37.8 here.
+
+That is the weakness the focal clamp was added for, since it reaches a camera a
+frame earlier. It sees only two camera objects per session, and this is not one
+of them. Fixing it properly means identifying the rendered camera without the
+shader constant, which is a rebuild of the core decision rather than another
+adjustment.
 
 ### Still open: the sustained jump at a cut inside the ramp
 

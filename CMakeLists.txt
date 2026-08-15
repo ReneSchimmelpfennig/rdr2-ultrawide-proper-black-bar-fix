@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(RDR2UltrawideCutsceneFix
-    VERSION 0.6.0
+    VERSION 0.6.1
     DESCRIPTION "Removes cutscene letterboxing while preserving the original framing"
     LANGUAGES CXX C)
 

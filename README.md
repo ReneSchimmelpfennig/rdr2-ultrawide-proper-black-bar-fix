@@ -45,8 +45,8 @@ letterbox animation, so the transition follows the bars rather than snapping.
 | Displays wider than 21:9 (32:9) | framed at the film frame, configurable — see below |
 | Cinematic camera in free roam | corrected without flicker after the cut |
 | Single-frame flashes | fixed — see below |
-| Cutscene → gameplay transition | a small jump remains as the bars fade out |
-| Cinematic camera, large FOV change | can flash once when gameplay and camera differ a lot |
+| Cutscene → gameplay transition | down from 7° to 0.8° as the bars fade out |
+| Camera cut with a large FOV change | one frame, when the two fields of view differ a lot |
 
 ### Fixed: the single-frame flashes
 
