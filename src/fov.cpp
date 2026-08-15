@@ -742,6 +742,26 @@ std::atomic<std::size_t> g_src_next{0};
 std::atomic<unsigned long long> g_echo_skips{0};
 std::atomic<std::uintptr_t> g_chain_root{0};
 
+// The value that is ours *right now*, for the focal clamp to compare against.
+//
+// Not the same thing as the last correction. During a fade-out no correction
+// happens at all -- every call is recognised and skipped -- while the game keeps
+// blending the value a little further. A reference that only updates when we
+// write goes stale exactly when it is needed:
+//
+//   skip-echo slot 29  in 39.3393                    we leave our value alone
+//   CLAMP w 0.1207     fov 39.3393                   no "(already ours)"
+//   skip-src  slot 40  src <slot 29's dst>  38.2184  and the clamp had corrected it
+//
+// 39.3393 against the last written 39.3190 is 5.2e-4 relative, a hair outside the
+// window. Recognising a value as ours is just as good a reason to remember it as
+// writing one, so this updates on both.
+//
+// Deliberately a single current value and not the ring: the ring is a history
+// and has to stay stable -- letting its entries drift was measured and broke the
+// fade *in*. This one means "the value in flight", nothing more.
+std::atomic<float> g_current_ours{0.0f};
+
 bool source_echoes_us(std::uintptr_t src, float value) {
     if (!kSourceEcho || src == 0) {
         return false;
@@ -1895,6 +1915,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // The value came out of a structure we wrote into. No float involved.
     if (src_carries_ours) {
         g_src_skips.fetch_add(1, std::memory_order_relaxed);
+
+        g_current_ours.store(original, std::memory_order_relaxed);
         finish(original, "skip-src");
         return;
     }
@@ -1902,6 +1924,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // Or it is the root handing our own output back to us.
     if (source_echoes_us(src, original)) {
         g_echo_skips.fetch_add(1, std::memory_order_relaxed);
+
+        g_current_ours.store(original, std::memory_order_relaxed);
         mark_carries_ours(dst);  // it is ours, so the chain below it is too
         finish(original, "skip-echo");
         return;
@@ -1914,6 +1938,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                                   : 0.0f,
                               false)) {
         refresh_ring_entry(original, false);
+
+        g_current_ours.store(original, std::memory_order_relaxed);
         finish(original, "skip-own");
         return;
     }
@@ -2100,6 +2126,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // to hold what we wrote, not what the game wrote.
     remember_our_output(result, slot == kNoSlot ? -1 : static_cast<int>(slot));
     mark_carries_ours(dst);  // everything read out of here from now on is ours
+
+    g_current_ours.store(result, std::memory_order_relaxed);
     remember_source_output(src, result);
 
     // The root of the chain, captured for the watchpoint.
@@ -2339,8 +2367,8 @@ void clamp_detour(std::uintptr_t camera) {
         // needs exactly one -- the correction written moments ago. Against a
         // single, current value a window fifty times wider is still nowhere near
         // an authored one, which sits a quarter of the value away.
-        constexpr float kLastOutputWindow = 5e-4f;
-        const float last_applied = g_last_our_output.load(std::memory_order_relaxed);
+        constexpr float kLastOutputWindow = 2e-3f;
+        const float last_applied = g_current_ours.load(std::memory_order_relaxed);
         const bool echoes_apply_site =
             last_applied != 0.0f &&
             std::fabs(before - last_applied) <= std::fabs(last_applied) * kLastOutputWindow;
