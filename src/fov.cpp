@@ -720,13 +720,19 @@ void forget_all_taint() {
 // then offers that value back, it is an echo of our own work. Scoping it to one
 // address is what makes a generous window safe -- an authored value coming out
 // of this root sits degrees away from our output, not thousandths.
-// OFF with the clamp change it was tested alongside.
+// ON, and this time on its own.
 //
-// It demonstrably works -- the log shows the chain root skipped frame after
-// frame through a whole fade -- but it never changed the picture, and shipping
-// two changes on one measurement is how the last regression got in. It goes back
-// on when there is a run that isolates it.
-constexpr bool kSourceEcho = false;
+// It was switched off together with a restriction on the focal clamp, after a
+// run where the fade-out jump stayed and the cinematic camera started flickering
+// again. Two changes, one measurement: which of them caused the flicker was
+// never established, and the log had shown this one doing exactly its job --
+// the chain root skipped frame after frame through a whole fade.
+//
+// So it goes back in isolation. It also happens to address precisely what the
+// last diagnostic proved: the root is where the ring is outrun by its own value,
+// and this rule is the one mechanism that does not compare against the ring at
+// all.
+constexpr bool kSourceEcho = true;
 constexpr std::size_t kSourceSlots = 64;
 constexpr float kEchoWindow = 1e-3f;
 std::uintptr_t g_src_addr[kSourceSlots]{};
