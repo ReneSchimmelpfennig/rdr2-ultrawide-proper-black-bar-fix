@@ -154,4 +154,8 @@ void report_destinations(std::uintptr_t module_base);
 // caught, which is what the ramp trace predicted.
 [[nodiscard]] unsigned long long second_writes();
 
+// How many values were recognised as ours by where they came from rather than by
+// what they were. Each one is a float comparison that did not have to be made.
+[[nodiscard]] unsigned long long src_skips();
+
 }  // namespace fov

@@ -775,8 +775,8 @@ DWORD WINAPI worker(LPVOID) {
                     in_cutscene = false;
                     logger::info("");
                     logger::info("--- the cutscene just ended (the counts that matter) ---");
-                    logger::info("second writes skipped: {}   nudged: {}   too small: {}",
-                                 fov::second_writes(), fov::separations(), fov::tiny_skips());
+                    logger::info("recognised by source: {}   second writes: {}   nudged: {}",
+                                 fov::src_skips(), fov::second_writes(), fov::separations());
                     uibox::report(module.base);
                     overlay::report(module.base);
                 }

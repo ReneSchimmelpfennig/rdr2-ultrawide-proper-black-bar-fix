@@ -576,6 +576,80 @@ double ticks_to_ms(long long span) {
     return frequency > 0.0 ? (static_cast<double>(span) * 1000.0) / frequency : 0.0;
 }
 
+// Provenance by address, which is what every value test was a poor substitute
+// for.
+//
+// The hook is ApplyCameraState(dst, src). We logged dst from the first day and
+// never src, and src turns out to chain the structures together:
+//
+//   slot 27  dst 0x029E5C373BB0  src 0x029E5C373AE0
+//   slot 40  dst 0x025666CFA870  src 0x029E5C373BB0   <- slot 27's dst
+//   slot 63  dst 0x025666CFAA10  src 0x025666CFA870   <- slot 40's dst
+//   slot 25  dst 0x00668670F8C0  src 0x025666CFAA10   <- slot 63's dst
+//
+// The game passes one camera state down a chain of structures. So "is this value
+// ours" is not a question about a float at all -- it is whether the value came
+// out of a structure we have written into. Caught in the act one line apart:
+//
+//   CORRECT  slot 28  dst 0x029E5C3758F0  src 0x029E5C375820  18.2000 -> 13.5993
+//   skip-own slot 44  dst 0x025666CFB7E0  src 0x029E5C3758F0  in 13.5993
+//
+// slot 44's source is exactly the structure slot 28 was just corrected into.
+// That is an address comparison: exact, no tolerance, and immune to the game
+// blending the value on the way -- which is what defeated the ring, the identity
+// test, the separation and the widened window in turn.
+//
+// The taint has to spread on every call, before any decision, because the chain
+// runs through structures we deliberately leave alone: a link that is skipped as
+// "not rendered" still carries our value to the next one, and if it is not
+// marked the chain breaks there and everything downstream looks authored again.
+constexpr bool kSrcProvenance = true;
+constexpr std::size_t kTaintSlots = 128;
+std::uintptr_t g_taint_addr[kTaintSlots]{};
+std::atomic<unsigned long long> g_taint_frame[kTaintSlots]{};
+std::atomic<std::size_t> g_taint_next{0};
+std::atomic<unsigned long long> g_frame_id{1};
+std::atomic<unsigned long long> g_src_skips{0};
+
+// Two frames, because a structure written late in one frame is read early in the
+// next -- the chain does not respect frame boundaries, only gameplay does.
+bool carries_ours(std::uintptr_t address) {
+    if (address == 0) {
+        return false;
+    }
+    const unsigned long long now = g_frame_id.load(std::memory_order_relaxed);
+    for (std::size_t i = 0; i < kTaintSlots; ++i) {
+        if (g_taint_addr[i] == address) {
+            const unsigned long long when = g_taint_frame[i].load(std::memory_order_relaxed);
+            return when != 0 && now - when <= 1;
+        }
+    }
+    return false;
+}
+
+void mark_carries_ours(std::uintptr_t address) {
+    if (address == 0) {
+        return;
+    }
+    const unsigned long long now = g_frame_id.load(std::memory_order_relaxed);
+    for (std::size_t i = 0; i < kTaintSlots; ++i) {
+        if (g_taint_addr[i] == address) {
+            g_taint_frame[i].store(now, std::memory_order_relaxed);
+            return;
+        }
+    }
+    const std::size_t index = g_taint_next.fetch_add(1, std::memory_order_relaxed) % kTaintSlots;
+    g_taint_addr[index] = address;
+    g_taint_frame[index].store(now, std::memory_order_relaxed);
+}
+
+void forget_all_taint() {
+    for (std::size_t i = 0; i < kTaintSlots; ++i) {
+        g_taint_addr[i] = 0;
+        g_taint_frame[i].store(0, std::memory_order_relaxed);
+    }
+}
+
 // What we have written in the frame currently in progress.
 //
 // The per-slot rule was not enough, and the log says exactly why: in the frame
@@ -656,7 +730,13 @@ double same_frame_window(long long now) {
     for (std::size_t i = 0; i < kGapWindow; ++i) {
         frame = std::max(frame, g_gaps[i].load(std::memory_order_relaxed));
     }
-    return frame > 0.0 ? frame * kSameFrameFraction : kSameFrameFallbackMs;
+    const double window = frame > 0.0 ? frame * kSameFrameFraction : kSameFrameFallbackMs;
+
+    // A gap that large is the space between two bursts, which is a new frame.
+    if (previous != 0 && ticks_to_ms(now - previous) >= window) {
+        g_frame_id.fetch_add(1, std::memory_order_relaxed);
+    }
+    return window;
 }
 
 // The two correction sites must not share one ring.
@@ -1226,6 +1306,19 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         remember_authored(original);
     }
 
+    // Once per call, at the top: this is what advances the frame counter the
+    // taint is dated against, and it must see every call, not only the ones that
+    // reach a decision.
+    const long long call_at = ticks_now();
+    const double frame_window = same_frame_window(call_at);
+
+    // Provenance first, and unconditionally: every call spreads the taint, so a
+    // link we skip still carries it to the next one.
+    const bool src_carries_ours = kSrcProvenance && carries_ours(src);
+    if (src_carries_ours) {
+        mark_carries_ours(dst);
+    }
+
     // Is *this* destination the one being rendered right now?
     //
     // Asked per call, not accumulated over the session. Which camera gets
@@ -1576,6 +1669,13 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         finish(original, "skip-not");
         return;
     }
+    // The value came out of a structure we wrote into. No float involved.
+    if (src_carries_ours) {
+        g_src_skips.fetch_add(1, std::memory_order_relaxed);
+        finish(original, "skip-src");
+        return;
+    }
+
     // false: the clamp's own outputs do not count as ours here. See kSeparateRings.
     if (is_our_own_output_for(original, previous_input,
                               slot != kNoSlot
@@ -1638,6 +1738,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 for (std::size_t i = 0; i < kOutputRing; ++i) {
                     g_our_outputs[i].store(0, std::memory_order_relaxed);
                 }
+                forget_all_taint();  // nothing from the last cutscene is ours any more
                 finish(original, "gameplay");  // leave the camera exactly as authored
                 return;
             }
@@ -1725,8 +1826,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // Already corrected in this frame? Then this is the second write, and the
     // second write is our own value coming back. See kOnePerSlotPerFrame.
     if (kOnePerSlotPerFrame && weight > 0.0f) {
-        const long long now = ticks_now();
-        const double window = same_frame_window(now);
+        const long long now = call_at;
+        const double window = frame_window;
 
         // A frame boundary: everything written before it belongs to the past.
         const long long previous_any = g_last_correct_at.load(std::memory_order_relaxed);
@@ -1764,6 +1865,7 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
     // Only corrections go into the ring. That is the whole point of it: it has
     // to hold what we wrote, not what the game wrote.
     remember_our_output(result, slot == kNoSlot ? -1 : static_cast<int>(slot));
+    mark_carries_ours(dst);  // everything read out of here from now on is ours
     remember_frame_output(result);
     g_last_correct_at.store(ticks_now(), std::memory_order_relaxed);
     if (slot != kNoSlot) {
@@ -2324,6 +2426,8 @@ unsigned long long separations() { return g_separations.load(std::memory_order_r
 unsigned long long tiny_skips() { return g_tiny_skips.load(std::memory_order_relaxed); }
 
 unsigned long long second_writes() { return g_second_writes.load(std::memory_order_relaxed); }
+
+unsigned long long src_skips() { return g_src_skips.load(std::memory_order_relaxed); }
 
 void report_destinations(std::uintptr_t module_base) {
     const std::size_t known = g_dst_known.load();
