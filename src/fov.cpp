@@ -126,7 +126,8 @@ std::atomic<unsigned> g_clamp_census{0};
 // on one of their lines -- but together they write several thousand lines per
 // cutscene, which is a diagnostic instrument and not something to ship. Same
 // treatment as the watchpoint: left whole, switched off, one constant away.
-constexpr bool kTraceDecisions = false;
+// ON for this build: a diagnostic, not a release. See the fade-out note below.
+constexpr bool kTraceDecisions = true;
 
 // Correct inside the focal-length clamp as well as in ApplyCameraState. See the
 // long note in clamp_detour. The failure mode is a picture that is too narrow.
@@ -1447,6 +1448,25 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
                 g_last_screen.store(0.0f, std::memory_order_relaxed);
                 g_ramp_trace.store(kRampTrace, std::memory_order_relaxed);
                 logger::info("--- cutscene begins, screen and ramp traces reset ---");
+            } else if (previous_weight >= kSettledWeight && weight < kSettledWeight &&
+                       weight > 0.0f) {
+                // The fade-out, which no trace has ever covered.
+                //
+                // Everything so far arms at the start of a cutscene, and the
+                // budget is long gone by the time it ends -- minutes of scene in
+                // between. But the jump left is at this end, and only when the
+                // player is moving, which is exactly when the game hands the
+                // render back to the gameplay camera *during* the fade.
+                //
+                // The question this has to answer: does that camera arrive
+                // through a different src chain than the cutscene camera we have
+                // been correcting? If it does, the rule writes itself -- during
+                // a fade-out, correct only what comes from the chain that was
+                // being corrected while settled.
+                g_screen_lines.store(0, std::memory_order_relaxed);
+                g_last_screen.store(0.0f, std::memory_order_relaxed);
+                g_ramp_trace.store(kRampTrace, std::memory_order_relaxed);
+                logger::info("--- fade-out begins, traces reset ---");
             }
         }
 
