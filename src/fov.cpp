@@ -611,17 +611,28 @@ std::atomic<std::size_t> g_taint_next{0};
 std::atomic<unsigned long long> g_frame_id{1};
 std::atomic<unsigned long long> g_src_skips{0};
 
-// Two frames, because a structure written late in one frame is read early in the
-// next -- the chain does not respect frame boundaries, only gameplay does.
+// No expiry date, because contents do not have one.
+//
+// The first version let the mark lapse after a frame, and the log shows what
+// that costs:
+//
+//   11:51:43.906  CORRECT slot 6   dst 0x023A33F301C0  37.0000 -> 27.9686
+//   11:51:43.929  CORRECT slot 25  src 0x023A33F301C0  in 39.3184 -> 29.7806
+//
+// Twenty-three milliseconds apart, so two frames, so the mark had lapsed -- and
+// the structure was corrected a second time although it had been holding our
+// value the whole time. The game simply does not rewrite every structure every
+// frame, and there is no reason it should.
+//
+// A mark ends when something writes an authored value over it, which
+// clear_carries_ours does, or when the cutscene does. Never merely with age.
 bool carries_ours(std::uintptr_t address) {
     if (address == 0) {
         return false;
     }
-    const unsigned long long now = g_frame_id.load(std::memory_order_relaxed);
     for (std::size_t i = 0; i < kTaintSlots; ++i) {
         if (g_taint_addr[i] == address) {
-            const unsigned long long when = g_taint_frame[i].load(std::memory_order_relaxed);
-            return when != 0 && now - when <= 1;
+            return g_taint_frame[i].load(std::memory_order_relaxed) != 0;
         }
     }
     return false;
