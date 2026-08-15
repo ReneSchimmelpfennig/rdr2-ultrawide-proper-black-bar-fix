@@ -212,6 +212,57 @@ Result: the held jump is gone, the cinematic camera is prompt again, and one jum
 at the start of that cutscene's transition remains — inside the ramp, which is
 where the clamp is still active. That is where to look next.
 
+### Solved: provenance is an address, not a value
+
+Every attempt above asks the same question — "did we write this value?" — of a
+float. Five of them failed, each in its own way, and the reason is that the game
+does not hand our value back unchanged: it blends it, by up to 5e-5 relative,
+which is outside any window narrow enough to be safe.
+
+The answer was in the hook's own signature all along. It is
+`ApplyCameraState(dst, src)`, and `src` had never been logged. It chains the
+structures together:
+
+```
+slot 27  dst 0x029E5C373BB0  src 0x029E5C373AE0
+slot 40  dst 0x025666CFA870  src 0x029E5C373BB0   <- slot 27's dst
+slot 63  dst 0x025666CFAA10  src 0x025666CFA870   <- slot 40's dst
+slot 25  dst 0x00668670F8C0  src 0x025666CFAA10   <- slot 63's dst
+```
+
+The game passes one camera state down a chain of a dozen structures per frame,
+and the rendered one is a stack temporary in the middle of it. So "is this value
+ours" is not a question about a float at all — it is whether the value came out
+of a structure we wrote into. That is an address comparison: exact, no
+tolerance, and untouched by any blending on the way.
+
+The rule is a taint that follows the copies:
+
+- correcting a structure marks it
+- a write whose source is marked marks its destination too
+- a write whose source is **not** marked clears the destination, because that
+  write brought an authored value in
+- a cutscene ending clears everything
+
+Three details each cost a build, and each is load-bearing:
+
+1. **The taint spreads on every call, before any decision.** The chain runs
+   through structures we deliberately leave alone; a link that is skipped as "not
+   rendered" still carries the value onward, and an unmarked link breaks the
+   chain for everything downstream.
+2. **Marks are cleared, not only set.** Without the clearing the first version
+   skipped thirteen writes for every one it corrected — a structure that had once
+   held our value kept its mark while the game refilled it from an authored
+   camera, and that authored value was then waved through.
+3. **Marks do not expire.** Dating them and letting them lapse after a frame
+   reintroduced the double correction, because the game does not rewrite every
+   structure every frame: `dst 0x023A33F301C0` was corrected at 11:51:43.906 and
+   read again at 11:51:43.929, two frames later, by which time the mark was gone.
+   Contents have no age.
+
+With that in place the transition into a cutscene is clean, and the manual
+cinematic camera in free roam no longer flickers after its cut.
+
 ### Still open: the sustained jump at a cut inside the ramp
 
 One cutscene shows two hard jumps rather than a flash, and the log says they are

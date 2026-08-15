@@ -43,16 +43,24 @@ letterbox animation, so the transition follows the bars rather than snapping.
 | Full-screen overlays and the intro video | fixed — they cover the whole screen, no smearing |
 | Cinematic camera | corrected, including the cut into the shot |
 | Displays wider than 21:9 (32:9) | framed at the film frame, configurable — see below |
-| Rare single-frame flash | see below |
+| Cinematic camera in free roam | corrected without flicker after the cut |
+| Single-frame flashes | fixed — see below |
+| Cutscene → gameplay transition | a small jump remains if you are moving during it |
 
-### Known issue: a rare single-frame flash
+### Fixed: the single-frame flashes
 
-Very occasionally one frame is rendered without the correction and the picture
-flashes. The cause is measured rather than suspected: the plugin recognises its
-own output by value, and two different cameras can hold values that close by
-coincidence. In one log our corrected 39.3139 sat 5e-6 away from another
-camera's authored 39.3141 — inside the tolerance, so the authored value was
-mistaken for ours and left alone.
+The plugin used to recognise its own output by value, and the game does not hand
+that value back unchanged — it blends it, by enough to fall outside any tolerance
+narrow enough to be safe. Frames were then corrected twice, or not at all, and
+the picture flashed for one frame.
+
+It now recognises its own output by **where it came from** instead. The hook is
+`ApplyCameraState(dst, src)`, and `src` chains the camera structures together, so
+a value that arrives out of a structure the plugin has written into is its own —
+an address comparison, exact, with no tolerance to get wrong.
+[`docs/how-it-works.md`](docs/how-it-works.md) has the whole chain, including the
+five value-based attempts that failed first and the three details of the taint
+rule that each cost a build.
 
 Tightening the tolerance is not the answer, and neither is a better test of the
 value: four were built and measured and none changed anything on screen.
