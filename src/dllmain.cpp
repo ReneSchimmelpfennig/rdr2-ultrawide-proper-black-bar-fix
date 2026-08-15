@@ -711,8 +711,9 @@ DWORD WINAPI worker(LPVOID) {
         // Cheap enough to leave in while the intro question is open: one line a
         // second for three minutes, then silent for the rest of the session.
         constexpr bool kWatchIntroBars = true;
-        const DWORD started_at = GetTickCount();
-        DWORD last_intro_sample = 0;
+        constexpr int kMaxIntroLines = 600;
+        int intro_lines = 0;
+        float last_w = -999.0f, last_b = -999.0f, last_s = -999.0f, last_t = -999.0f;
         bool root_watched = false;
         bool settled_seen = false;
 
@@ -760,10 +761,20 @@ DWORD WINAPI worker(LPVOID) {
             // first three minutes, which covers the intro from a cold start.
             // A hundred and eighty lines, and it settles whether this subsystem
             // is even awake when the bars are on screen.
+            // Changes only, for the whole session.
+            //
+            // The first version sampled once a second for three minutes from
+            // plugin load, and missed: 179 samples, all zero, ending at 22:15:32
+            // while the first correction came at 22:16:04. Loading the game and
+            // reaching the intro simply takes longer than three minutes, so the
+            // window closed half a minute before the interesting part.
+            //
+            // Logging every change instead covers any moment in a session and
+            // stays small: at a 200 ms tick a fade contributes a handful of
+            // lines and a static scene none at all. The one line that matters is
+            // the first time any of these stops being zero.
             if (kWatchIntroBars && g_letterbox_anchor != 0 &&
-                GetTickCount() - started_at < 3 * 60 * 1000 &&
-                GetTickCount() - last_intro_sample >= 1000) {
-                last_intro_sample = GetTickCount();
+                intro_lines < kMaxIntroLines) {
                 const std::uintptr_t weight_addr =
                     g_letterbox_anchor + patterns::letterbox::kWeight;
                 const std::uintptr_t bar235 = g_letterbox_anchor + patterns::kDrawnBar235;
@@ -771,10 +782,21 @@ DWORD WINAPI worker(LPVOID) {
                 const std::uintptr_t target =
                     g_letterbox_anchor + patterns::letterbox::kTargetAspect;
                 if (is_readable(weight_addr, sizeof(float))) {
-                    logger::info("intro watch: weight {:.4f}  top/bottom {:.6f}  sides {:.6f}"
-                                 "  target {:.5f}",
-                                 read_float(weight_addr), read_float(bar235), read_float(sides),
-                                 read_float(target));
+                    const float w = read_float(weight_addr);
+                    const float b = read_float(bar235);
+                    const float s = read_float(sides);
+                    const float t = read_float(target);
+                    const auto moved = [](float a, float b2) {
+                        return std::fabs(a - b2) > 1e-5f;
+                    };
+                    if (moved(w, last_w) || moved(b, last_b) || moved(s, last_s) ||
+                        moved(t, last_t)) {
+                        last_w = w; last_b = b; last_s = s; last_t = t;
+                        ++intro_lines;
+                        logger::info("letterbox: weight {:.4f}  top/bottom {:.6f}  sides {:.6f}"
+                                     "  target {:.5f}",
+                                     w, b, s, t);
+                    }
                 }
             }
 
