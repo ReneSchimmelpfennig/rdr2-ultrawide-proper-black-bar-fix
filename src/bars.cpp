@@ -100,10 +100,14 @@ std::atomic<int> g_blank_logged{0};
 
 // Blank the bar values whenever the bars are supposed to be hidden, not only on
 // wide displays. Covers the drawing path that ignores the enable byte.
-constexpr bool kBlankWhenHidden = true;
+// OFF. Measured twice as no change: the blanking demonstrably lands -- the log
+// shows the values alternating between the game's and ours through the whole
+// scene -- and the bars stay up regardless. So this drawing takes its geometry
+// from neither copy, and writing into them is work for nothing.
+constexpr bool kBlankWhenHidden = false;
 
-// Diagnostic: skip the letterbox drawing outright while the bars are hidden.
-constexpr bool kSkipDrawWhenHidden = true;
+// OFF, untested and parked with the rest.
+constexpr bool kSkipDrawWhenHidden = false;
 float g_last_weight_seen = -1.0f;
 
 float read_float_at(std::uintptr_t address) {
