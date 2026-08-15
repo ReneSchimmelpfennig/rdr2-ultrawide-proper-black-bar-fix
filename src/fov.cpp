@@ -1204,7 +1204,13 @@ std::atomic<float> g_flip_last_shader{0.0f};
 std::atomic<int> g_flip_budget{0};
 
 // The whole ramp, recorded from its first frame rather than from the symptom.
-constexpr int kRampTrace = 2400;
+//
+// Raised from 2400: the flashes that are left sit at weight 0.96 and 0.24, in
+// the middle of a transition, and the budget ran out before either. A ramp is
+// about 1.3 s at two dozen calls a frame, so 2400 covered barely half of one --
+// and the run has three cutscenes in it. Log size is not the constraint here;
+// missing the one frame that matters is.
+constexpr int kRampTrace = 8000;
 std::atomic<int> g_ramp_trace{0};
 
 // Some destinations are temporaries on the stack -- the log shows addresses in
