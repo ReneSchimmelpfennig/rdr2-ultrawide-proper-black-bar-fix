@@ -714,6 +714,7 @@ DWORD WINAPI worker(LPVOID) {
         constexpr int kMaxIntroLines = 600;
         int intro_lines = 0;
         float last_w = -999.0f, last_b = -999.0f, last_s = -999.0f, last_t = -999.0f;
+        int last_enable = -1;
         bool root_watched = false;
         bool settled_seen = false;
 
@@ -789,13 +790,30 @@ DWORD WINAPI worker(LPVOID) {
                     const auto moved = [](float a, float b2) {
                         return std::fabs(a - b2) > 1e-5f;
                     };
+                    // The enable byte, which is the whole question now.
+                    //
+                    // The scene after the intro video switches the letterbox on
+                    // abruptly -- weight 0 to 1 with no ramp -- and sides come up
+                    // at 0.127907, the pillarbox for this display. Those are the
+                    // bars on screen. Our patch writes 0 into this byte instead
+                    // of 0xFF, so either something else puts 0xFF back, or this
+                    // particular drawing never consults it.
+                    //
+                    // One byte tells which, and we have never logged it.
+                    std::uint8_t enable = 0;
+                    std::memcpy(&enable,
+                                reinterpret_cast<const void*>(
+                                    g_letterbox_anchor + patterns::letterbox::kConstantFF),
+                                sizeof(enable));
+
                     if (moved(w, last_w) || moved(b, last_b) || moved(s, last_s) ||
-                        moved(t, last_t)) {
+                        moved(t, last_t) || enable != last_enable) {
                         last_w = w; last_b = b; last_s = s; last_t = t;
+                        last_enable = enable;
                         ++intro_lines;
                         logger::info("letterbox: weight {:.4f}  top/bottom {:.6f}  sides {:.6f}"
-                                     "  target {:.5f}",
-                                     w, b, s, t);
+                                     "  target {:.5f}  enable 0x{:02X}",
+                                     w, b, s, t, enable);
                     }
                 }
             }
