@@ -1373,6 +1373,13 @@ std::atomic<std::size_t> g_frame_slot{static_cast<std::size_t>(-1)};
 // Which structure was last seen carrying the value that got rendered.
 std::atomic<std::size_t> g_render_slot{static_cast<std::size_t>(-1)};
 
+// Whether the shader constant confirmed the render slot in this very frame,
+// rather than it being carried over from an earlier one.
+std::atomic<bool> g_render_confirmed{false};
+
+// Keep the screen trace running briefly after a cutscene ends.
+std::atomic<unsigned long long> g_trail_until{0};
+
 // Armed by a swing in the rendered field of view, spent one line per call. 600
 // covers about twenty frames of a two-dozen-call frame -- both sides of several
 // flips, and nothing else in the session.
@@ -1557,6 +1564,8 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // between corrected and untouched. A fix that silences the feature is
         // worse than the fault it was aimed at, so it goes back until the
         // decisions have actually been measured rather than guessed at.
+        g_render_confirmed.store(matches, std::memory_order_relaxed);
+
         if (matches) {
             g_render_slot.store(slot, std::memory_order_relaxed);
         }
@@ -1650,7 +1659,22 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         //
         // It changes once per frame, so logging only its changes gives one line
         // per frame and no more. A hop reads as A -> B -> A within a few lines.
-        if (weight > 0.0f && shader_now != 0.0f &&
+        // Keep recording for a moment after the bars are gone.
+        //
+        // The trace ran only while the weight was above zero, which means it
+        // stopped at the exact instant of the handover back to gameplay -- and
+        // two of the six things reported from a play session were "a jump at the
+        // transition from cutscene to gameplay". They were in the blind spot,
+        // not absent.
+        //
+        // A couple of seconds of gameplay per cutscene costs little and covers
+        // the handover from both sides.
+        if (weight > 0.0f) {
+            g_trail_until.store(GetTickCount64() + 2000, std::memory_order_relaxed);
+        }
+        const bool trailing = GetTickCount64() < g_trail_until.load(std::memory_order_relaxed);
+
+        if ((weight > 0.0f || trailing) && shader_now != 0.0f &&
             g_screen_lines.load(std::memory_order_relaxed) < kMaxScreenLines) {
             const float last = g_last_screen.load(std::memory_order_relaxed);
             if (std::fabs(shader_now - last) > 1e-4f) {
@@ -1708,8 +1732,18 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // against what we wrote into *this* structure last time. Both sides of
         // the comparison then belong to the same camera, which is what the line
         // claims to be about.
+        // And only when we actually know which camera is rendered.
+        //
+        // Per-camera was not enough: the budget still went in seven seconds. The
+        // lines show why -- g_render_slot pointed at slot 25 while the shader
+        // carried a different camera entirely. That slot is *sticky*, carried
+        // across cuts on purpose, so believing it during a cut is believing a
+        // guess. Requiring the shader to have confirmed this structure in this
+        // very frame is the difference between "we think this is the rendered
+        // camera" and "it is".
         const bool judging_rendered_camera =
-            slot != kNoSlot && g_render_slot.load(std::memory_order_relaxed) == slot;
+            slot != kNoSlot && g_render_slot.load(std::memory_order_relaxed) == slot &&
+            g_render_confirmed.load(std::memory_order_relaxed);
         if (std::strcmp(decision, "CORRECT") == 0 && judging_rendered_camera) {
             g_last_our_output.store(final_value, std::memory_order_relaxed);
             const float ours = g_dst_ours_previous[slot].load(std::memory_order_relaxed);
