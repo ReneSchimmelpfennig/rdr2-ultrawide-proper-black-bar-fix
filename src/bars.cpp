@@ -5,6 +5,7 @@
 #include <MinHook.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
 
 #include "fov.h"
@@ -109,6 +110,11 @@ constexpr bool kBlankWhenHidden = false;
 // ON for this run: the binary question -- does the function we hook draw these
 // bars at all?
 constexpr bool kSkipDrawWhenHidden = true;
+
+// Find every copy of the bar fraction in memory near the anchor. One pass, once
+// per session, while the bars are on screen.
+constexpr bool kScanForBarValue = true;
+std::atomic<bool> g_scan_done{false};
 float g_last_weight_seen = -1.0f;
 
 float read_float_at(std::uintptr_t address) {
@@ -224,6 +230,44 @@ void draw_detour() {
         // meant to be hidden anyway. If something else disappears with them,
         // that is a result too: this function would then draw more than the
         // letterbox.
+        // Where else does this number live?
+        //
+        // Everything about this drawing has now been ruled out from the inside:
+        // the enable byte is ours and it ignores it, both copies of the geometry
+        // are blanked and it ignores those, and skipping the whole letterbox
+        // drawing changes nothing -- so it is not even the function we hook.
+        //
+        // What is left is the value itself. 0.127907 is (1 - (16/9)/2.3889)/2,
+        // specific enough that a match is not a coincidence, and if the game
+        // keeps a second instance of this structure somewhere the number is
+        // sitting in it right now. A scan of the memory around the anchor costs
+        // one pass and needs no debugger.
+        //
+        // Once per session, and only while the bars are actually up.
+        if (kScanForBarValue && weight > 0.5f &&
+            !g_scan_done.exchange(true, std::memory_order_relaxed)) {
+            const float wanted = read_float_at(g_anchor + patterns::kDrawnBarDisplay) > 0.001f
+                                     ? read_float_at(g_anchor + patterns::kDrawnBarDisplay)
+                                     : 0.127907f;
+            constexpr std::ptrdiff_t kRange = 0x8000;  // 32 KB either way
+            int found = 0;
+            logger::info("bars: scanning +/-0x{:X} around the anchor for {:.6f}", kRange, wanted);
+            for (std::ptrdiff_t offset = -kRange; offset <= kRange; offset += 4) {
+                const std::uintptr_t at = g_anchor + offset;
+                MEMORY_BASIC_INFORMATION mbi{};
+                if (VirtualQuery(reinterpret_cast<LPCVOID>(at), &mbi, sizeof(mbi)) == 0 ||
+                    mbi.State != MEM_COMMIT ||
+                    (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
+                    continue;
+                }
+                const float there = read_float_at(at);
+                if (std::fabs(there - wanted) <= 1e-6f && ++found <= 24) {
+                    logger::info("bars:   {:+#07x}  {:.6f}", static_cast<int>(offset), there);
+                }
+            }
+            logger::info("bars: {} match(es)", found);
+        }
+
         if (kSkipDrawWhenHidden) {
             if (g_blank_logged.fetch_add(1, std::memory_order_relaxed) < 6) {
                 logger::info("bars: skipping the letterbox drawing (weight {:.4f})",
