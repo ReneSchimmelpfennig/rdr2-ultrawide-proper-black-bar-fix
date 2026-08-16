@@ -106,8 +106,9 @@ std::atomic<int> g_blank_logged{0};
 // from neither copy, and writing into them is work for nothing.
 constexpr bool kBlankWhenHidden = false;
 
-// OFF, untested and parked with the rest.
-constexpr bool kSkipDrawWhenHidden = false;
+// ON for this run: the binary question -- does the function we hook draw these
+// bars at all?
+constexpr bool kSkipDrawWhenHidden = true;
 float g_last_weight_seen = -1.0f;
 
 float read_float_at(std::uintptr_t address) {
@@ -175,10 +176,14 @@ void draw_detour() {
     // Not zero: the update ends with `if (bar == 0.0) bar = 1.0`, and a bar of
     // 1.0 covers the screen. 6.25e-5 is what the game itself computes from a
     // target of 1.778, which is 0.09 px at 1440.
-    if (kBlankWhenHidden && g_hidden && !g_side_bars.load(std::memory_order_relaxed) &&
-        g_anchor != 0) {
+    // One guard for both experiments, because nesting the second inside the
+    // first meant it could never run: the skip sat inside the blanking block,
+    // and switching the blanking off switched it off too. Nothing was measured
+    // there, and I reported it as parked.
+    if ((kBlankWhenHidden || kSkipDrawWhenHidden) && g_hidden &&
+        !g_side_bars.load(std::memory_order_relaxed) && g_anchor != 0) {
         const float weight = read_float_at(g_anchor + patterns::letterbox::kWeight);
-        if (weight > 0.0f) {
+        if (weight > 0.0f && kBlankWhenHidden) {
             constexpr double kInvisible = 6.25e-5;
             const float hair = static_cast<float>(kInvisible * weight);
             const float was235 = read_float_at(g_anchor + patterns::kDrawnBar235);
@@ -203,21 +208,28 @@ void draw_detour() {
                              was235, wasSides, weight);
             }
 
-            // One line that decides where the bars come from.
-            //
-            // Blanking both copies of the geometry changed nothing, so this
-            // drawing does not take it from the letterbox struct at all. Rather
-            // than guess at a third location, skip the call: if the bars are
-            // drawn by this function they disappear, and if they survive it is
-            // another function entirely and a read watchpoint is the next step.
-            //
-            // Safe as an experiment, because it only applies when the bars are
-            // meant to be hidden. If something else disappears with them, that
-            // is worth knowing too -- it would mean this function draws more
-            // than the letterbox.
-            if (kSkipDrawWhenHidden) {
-                return;  // deliberately not calling the original
+        }
+
+        // One experiment that decides where the bars come from.
+        //
+        // Blanking both copies of the geometry changed nothing, and the log
+        // proves the writes landed. So this drawing does not take its geometry
+        // from the letterbox struct at all. Rather than guess at a third
+        // location, skip the call: if the bars are drawn by this function they
+        // disappear, and if they survive it is another function entirely -- and
+        // we are hooked to the wrong one, which is worth knowing before spending
+        // another run on a watchpoint.
+        //
+        // Safe as an experiment, because it only applies where the bars are
+        // meant to be hidden anyway. If something else disappears with them,
+        // that is a result too: this function would then draw more than the
+        // letterbox.
+        if (kSkipDrawWhenHidden) {
+            if (g_blank_logged.fetch_add(1, std::memory_order_relaxed) < 6) {
+                logger::info("bars: skipping the letterbox drawing (weight {:.4f})",
+                             read_float_at(g_anchor + patterns::letterbox::kWeight));
             }
+            return;  // deliberately not calling the original
         }
     }
 
