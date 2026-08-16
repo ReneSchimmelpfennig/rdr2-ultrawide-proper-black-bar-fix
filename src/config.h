@@ -40,7 +40,11 @@ struct Settings {
     // bars. Those effects are scissored to the 16:9 window, and where the bar was
     // you can then see the unprocessed strip. The same artefact this plugin had
     // to solve for the intro overlay.
-    bool remove_all_black_bars = false;
+    // Default true after a full play session with it on: no side effects turned
+    // up anywhere, menus and photo mode included. The setting stays as a way
+    // back for anyone who does hit the unprocessed strips, or who simply wants
+    // the menu bars.
+    bool remove_all_black_bars = true;
 };
 
 // Looks next to the plugin first, because that is where people expect a mod's

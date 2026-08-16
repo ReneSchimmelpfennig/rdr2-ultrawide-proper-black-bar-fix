@@ -131,17 +131,18 @@ only above 21:9, so it cannot change what narrower displays already get.
 
 RDR2 has two separate systems for black bars, and the second one puts them on the
 pause menu, shops and photo mode as well as on the scene that follows the intro
-video. The plugin suppresses it while a cutscene is running, which is what
-removes the bars from that scene, and leaves the menus as the game intends them.
+video. The plugin suppresses that one too, which is what removes the bars from
+that scene.
 
 ```ini
-RemoveAllBlackBars = false
+RemoveAllBlackBars = true
 ```
 
-Set it to `true` to remove those too. It is not risky — the long-standing
-`RDR2NoBlackBars` mod disables that function outright — but the screen effects
-behind those bars are still drawn for a 16:9 window, so where a bar used to be an
-unprocessed strip can show. This setting applies at every resolution.
+Set it to `false` to keep the bars outside cutscenes. The reason to: the screen
+effects behind them are still drawn for a 16:9 window, so where a bar used to be
+an unprocessed strip can show. Nothing of the sort turned up across a full play
+session including menus and photo mode, which is why this is the default, but
+different scenes may differ. This setting applies at every resolution.
 
 ## Requirements
 
