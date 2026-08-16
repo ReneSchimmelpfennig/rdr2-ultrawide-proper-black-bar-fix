@@ -37,6 +37,26 @@ bool init(std::uintptr_t anchor_store);
 // hiding the bars as before.
 bool init_side_bars(const std::vector<mem::NamedRegion>& sections, std::uintptr_t anchor);
 
+// The second bar drawer, the one the reference mod disables outright.
+//
+// RDR2NoBlackBars.asi carries two signatures. The first is the anchor store,
+// whose immediate we patch as well. The second is a function prologue that our
+// logs have been reporting as "unknown prologue" for days without ever being
+// used -- and the mod writes 0xC3 over it, a bare `ret`, killing the function.
+// That is what removes the bars it removes and we do not: the pause menu, shops,
+// photo mode, and by all appearances the scene after the intro video, where
+// every part of the letterbox struct was measured innocent.
+//
+// Hooked rather than patched, because "remove every bar everywhere" is not what
+// we want. The menu's bars belong to the menu. This lets the decision depend on
+// what is happening.
+bool init_second_drawer(const std::vector<mem::NamedRegion>& sections,
+                        std::uintptr_t letterbox_anchor);
+
+// Suppress that second drawer while a cutscene is running. Menus, where the
+// letterbox weight is zero, keep their bars.
+void set_suppress_second_drawer(bool on);
+
 // Turns the side bars on. Until this is called the hook only passes through.
 void set_side_bars(bool on);
 

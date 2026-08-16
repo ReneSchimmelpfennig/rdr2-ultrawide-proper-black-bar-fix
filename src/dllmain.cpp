@@ -538,6 +538,13 @@ DWORD WINAPI worker(LPVOID) {
             // decision is made in the loop below.
             bars::init_side_bars(mem::executable_sections(module), anchor);
 
+            // The second drawer, from the reference mod's other signature.
+            // Hooked and suppressed only while a cutscene is running, so menus
+            // keep the bars that belong to them.
+            if (bars::init_second_drawer(mem::executable_sections(module), anchor)) {
+                bars::set_suppress_second_drawer(true);
+            }
+
             // Prepared but not applied: measured to have no effect on the 2D
             // layer (see docs/how-it-works.md). The site stays reachable by
             // Ctrl+Alt+S so the measurement can be repeated cheaply, but it is

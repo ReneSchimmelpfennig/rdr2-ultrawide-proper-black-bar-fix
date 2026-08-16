@@ -485,6 +485,81 @@ bool init_side_bars(const std::vector<mem::NamedRegion>& sections, std::uintptr_
     return true;
 }
 
+namespace {
+
+using SecondFn = void (*)();
+SecondFn g_second_original = nullptr;
+void* g_second_target = nullptr;
+std::uintptr_t g_second_anchor = 0;
+std::atomic<bool> g_suppress_second{false};
+std::atomic<unsigned> g_second_calls{0};
+std::atomic<int> g_second_drawer_logged{0};
+
+void second_detour() {
+    g_second_calls.fetch_add(1, std::memory_order_relaxed);
+
+    float weight = 0.0f;
+    if (g_second_anchor != 0) {
+        weight = read_float_at(g_second_anchor + patterns::letterbox::kWeight);
+    }
+
+    // What this function does was never established from our side -- it was
+    // found, logged and left alone. The reference mod answers it by force: it
+    // writes a `ret` here and the remaining bars disappear, menus included.
+    //
+    // The first few lines say when it runs, which decides how selective we can
+    // afford to be. If it only runs while something is boxed in, suppressing it
+    // during cutscenes is enough and the menu keeps its own.
+    if (g_second_drawer_logged.fetch_add(1, std::memory_order_relaxed) < 12) {
+        logger::info("second drawer: call {} at letterbox weight {:.4f}{}",
+                     g_second_calls.load(std::memory_order_relaxed), weight,
+                     g_suppress_second.load(std::memory_order_relaxed) && weight > 0.0f
+                         ? "  -- suppressed"
+                         : "");
+    }
+
+    if (g_suppress_second.load(std::memory_order_relaxed) && weight > 0.0f) {
+        return;  // the cutscene case: this is what the mod does permanently
+    }
+    g_second_original();
+}
+
+}  // namespace
+
+bool init_second_drawer(const std::vector<mem::NamedRegion>& sections,
+                        std::uintptr_t letterbox_anchor) {
+    const auto pattern = mem::parse_pattern(patterns::kUnknownPrologue);
+    if (!pattern) {
+        logger::info("second drawer: malformed signature");
+        return false;
+    }
+    std::vector<std::uintptr_t> hits;
+    for (const auto& [name, region] : sections) {
+        mem::find_all(region, *pattern, hits);
+    }
+    if (hits.size() != 1) {
+        logger::info("second drawer: signature matched {} time(s), need 1", hits.size());
+        return false;
+    }
+
+    g_second_anchor = letterbox_anchor;
+    g_second_target = reinterpret_cast<void*>(hits.front());
+    if (MH_CreateHook(g_second_target, reinterpret_cast<void*>(&second_detour),
+                      reinterpret_cast<void**>(&g_second_original)) != MH_OK ||
+        MH_EnableHook(g_second_target) != MH_OK) {
+        logger::info("second drawer: hooking failed");
+        g_second_target = nullptr;
+        return false;
+    }
+    logger::info("second drawer: hooked at 0x{:016X}", hits.front());
+    return true;
+}
+
+void set_suppress_second_drawer(bool on) {
+    g_suppress_second.store(on, std::memory_order_relaxed);
+    logger::info("second drawer: {}", on ? "suppressed during cutscenes" : "left alone");
+}
+
 void set_side_bars(bool on) {
     g_side_bars.store(on, std::memory_order_relaxed);
     logger::info("side bars: {}", on ? "on -- the picture is framed, not extended" : "off");
