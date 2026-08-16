@@ -813,6 +813,23 @@ DWORD WINAPI worker(LPVOID) {
                                     g_letterbox_anchor + patterns::letterbox::kConstantFF),
                                 sizeof(enable));
 
+                    // A letterbox that snaps on instead of ramping.
+                    //
+                    // The scene after the intro video went from weight 0 to 1
+                    // between two samples, where a normal cutscene takes about
+                    // 1.3 s and therefore moves roughly 0.15 per 200 ms tick.
+                    // That difference is large enough to be a fingerprint, and
+                    // it seems to mark the scenes built as video over live
+                    // gameplay -- the class other bar-removal mods are reported
+                    // to break, the honour deer and coyote among them.
+                    //
+                    // Naming them from memory would be guessing; this says when
+                    // one is actually on screen, whichever it turns out to be.
+                    if (last_w >= 0.0f && last_w < 0.05f && w > 0.9f) {
+                        logger::info("letterbox: snapped on without a ramp -- video-over-gameplay"
+                                     " scene? (see docs/testing.md)");
+                    }
+
                     if (moved(w, last_w) || moved(b, last_b) || moved(s, last_s) ||
                         moved(t, last_t) || enable != last_enable) {
                         last_w = w; last_b = b; last_s = s; last_t = t;
