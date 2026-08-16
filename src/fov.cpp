@@ -1741,8 +1741,29 @@ void detour(std::uintptr_t dst, std::uintptr_t src) {
         // guess. Requiring the shader to have confirmed this structure in this
         // very frame is the difference between "we think this is the rendered
         // camera" and "it is".
+        // OFF, after two failed repairs, and this time for a structural reason.
+        //
+        // It burned its whole budget in seven seconds on both attempts -- 600
+        // lines two minutes into a session, then silence for the rest of an
+        // evening, which is worse than not logging at all because it hides the
+        // late events somebody actually saw.
+        //
+        //   MISS w 0.9996  slot 25  we wrote 39.3297, the picture shows 28.6405
+        //                           now correcting 51.2820 -> 39.3239
+        //
+        // Slot 25 is confirmed as the rendered structure and genuinely is one --
+        // but "slot" here is an *address*, and that address is the stack
+        // temporary through which different cameras pass in turn. What we last
+        // wrote there belongs to a different camera than what the shader is
+        // showing. No tightening fixes that; the comparison is meaningless while
+        // identity is an address.
+        //
+        // The screen trace stays, and it is the honest instrument anyway: it
+        // records what reached the picture, without any claim about which camera
+        // it belonged to.
         const bool judging_rendered_camera =
-            slot != kNoSlot && g_render_slot.load(std::memory_order_relaxed) == slot &&
+            kTraceDecisions && slot != kNoSlot &&
+            g_render_slot.load(std::memory_order_relaxed) == slot &&
             g_render_confirmed.load(std::memory_order_relaxed);
         if (std::strcmp(decision, "CORRECT") == 0 && judging_rendered_camera) {
             g_last_our_output.store(final_value, std::memory_order_relaxed);
