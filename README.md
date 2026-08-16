@@ -44,7 +44,9 @@ letterbox animation, so the transition follows the bars rather than snapping.
 | Cinematic camera | corrected, including the cut into the shot |
 | Displays wider than 21:9 (32:9) | framed at the film frame, configurable — see below |
 | Cinematic camera in free roam | corrected without flicker after the cut |
-| Single-frame flashes | fixed — see below |
+| Single-frame flashes | mostly fixed — one can remain at a camera cut, see below |
+| Bars after the intro video | removed; they come from a second, separate bar system |
+| Softlock-prone missions | "Exit Pursued by a Bruised Ego" tested and clean |
 | Cutscene → gameplay transition | down from 7° to 0.8° as the bars fade out |
 | Camera cut with a large FOV change | one frame, when the two fields of view differ a lot |
 

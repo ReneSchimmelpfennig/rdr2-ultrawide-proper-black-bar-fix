@@ -486,6 +486,49 @@ with scene showing past its edges.
 Everything above is gated on the display aspect, so a 21:9 or 16:9 machine never
 enters any of it, and the setting cannot change what those displays already get.
 
+## There are two bar systems, not one
+
+The letterbox struct described above is not the whole story, and the scene that
+follows the intro video is where that becomes obvious: bars appear on the sides,
+without any ramp, and every part of the struct measures innocent.
+
+Ruled out one after another, each by a run in that scene:
+
+- the enable byte is `0x00` — our patch, working — while the bars are up, so this
+  drawing never consults it
+- blanking both copies of the geometry lands (the log shows the values
+  alternating between the game's and ours) and changes nothing
+- skipping the letterbox drawing entirely changes nothing, in that scene or in
+  gameplay
+- a scan of 64 KB around the anchor finds the bar fraction at `+0x08` and `+0x28`
+  and nowhere else
+
+The answer was in the reference mod all along. `RDR2NoBlackBars.asi` carries two
+signatures as plaintext, and this project had been using only the first. The
+second is a function prologue, reported in every log since the beginning as
+"unknown prologue", and the mod's own code says what to do with it:
+
+```
+C6 03 C3     mov byte ptr [rbx], 0C3h
+```
+
+A bare `ret` over the entry. That second function is what draws the bars on the
+pause menu, in shops, in photo mode, and in the scene after the intro video.
+
+This plugin hooks it instead of killing it, because "no bars anywhere" is not the
+goal — the menu's bars belong to the menu. It is suppressed while the letterbox
+weight is above zero, which covers cutscenes and that scene, and
+`RemoveAllBlackBars = true` extends it everywhere for anyone who prefers the
+reference mod's behaviour.
+
+### A fingerprint for scenes built as video over gameplay
+
+Those scenes switch the letterbox on without a ramp: weight 0 to 1 between two
+200 ms samples, where a normal cutscene moves about 0.15 per sample. That is
+distinct enough to detect, and the plugin logs it, because the alternative was
+naming such scenes from memory. Confirmed in play: the line appeared 13 ms after
+a reported flash at a video-to-cutscene transition.
+
 ## The 2D layer: two more dead ends, and what they narrowed down
 
 **The bar heights have no consumer other than the bars.** Traced exhaustively
