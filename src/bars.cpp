@@ -107,13 +107,16 @@ std::atomic<int> g_blank_logged{0};
 // from neither copy, and writing into them is work for nothing.
 constexpr bool kBlankWhenHidden = false;
 
-// ON for this run: the binary question -- does the function we hook draw these
-// bars at all?
-constexpr bool kSkipDrawWhenHidden = true;
+// OFF. Answered: it does not. The bars survived skipping it entirely, and so did
+// everything else -- including in gameplay, where the log shows the skip running
+// at weight 0 with no visible consequence. Since the byte patch took effect this
+// function has drawn nothing we can see.
+constexpr bool kSkipDrawWhenHidden = false;
 
-// Find every copy of the bar fraction in memory near the anchor. One pass, once
-// per session, while the bars are on screen.
-constexpr bool kScanForBarValue = true;
+// OFF. Answered: two matches in 64 KB around the anchor, +0x08 and +0x28, both
+// already known. No third instance of the structure is anywhere near, so whatever
+// draws these bars does not keep this number in the neighbourhood.
+constexpr bool kScanForBarValue = false;
 std::atomic<bool> g_scan_done{false};
 float g_last_weight_seen = -1.0f;
 
