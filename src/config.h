@@ -21,6 +21,22 @@ struct Settings {
     // true: expand the cutscene sideways instead, which shows scene the shot was
     // never framed to include.
     bool expand_cutscenes_sideways = false;
+
+    // Whether the second bar drawer is suppressed everywhere or only in
+    // cutscenes.
+    //
+    // It is the function the reference mod kills outright with a `ret`, and it
+    // is what puts bars on the pause menu, shops and photo mode as well as in
+    // the scene after the intro video. Suppressing it only while the letterbox
+    // weight is above zero leaves the menus exactly as the game intends them.
+    //
+    // true removes them everywhere. That is what the reference mod does, and it
+    // has been in wide use since December 2024, so it is not dangerous -- but its
+    // own description warns that it does not fix the screen effects behind those
+    // bars. Those effects are scissored to the 16:9 window, and where the bar was
+    // you can then see the unprocessed strip. The same artefact this plugin had
+    // to solve for the intro overlay.
+    bool remove_all_black_bars = false;
 };
 
 // Looks next to the plugin first, because that is where people expect a mod's

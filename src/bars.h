@@ -55,7 +55,7 @@ bool init_second_drawer(const std::vector<mem::NamedRegion>& sections,
 
 // Suppress that second drawer while a cutscene is running. Menus, where the
 // letterbox weight is zero, keep their bars.
-void set_suppress_second_drawer(bool on);
+void set_suppress_second_drawer(bool on, bool everywhere);
 
 // Turns the side bars on. Until this is called the hook only passes through.
 void set_side_bars(bool on);

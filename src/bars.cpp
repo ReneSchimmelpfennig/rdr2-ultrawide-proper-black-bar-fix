@@ -492,6 +492,7 @@ SecondFn g_second_original = nullptr;
 void* g_second_target = nullptr;
 std::uintptr_t g_second_anchor = 0;
 std::atomic<bool> g_suppress_second{false};
+std::atomic<bool> g_suppress_everywhere{false};
 std::atomic<unsigned> g_second_calls{0};
 std::atomic<int> g_second_drawer_logged{0};
 
@@ -518,8 +519,9 @@ void second_detour() {
                          : "");
     }
 
-    if (g_suppress_second.load(std::memory_order_relaxed) && weight > 0.0f) {
-        return;  // the cutscene case: this is what the mod does permanently
+    if (g_suppress_second.load(std::memory_order_relaxed) &&
+        (weight > 0.0f || g_suppress_everywhere.load(std::memory_order_relaxed))) {
+        return;  // suppressed: in cutscenes, or everywhere on request
     }
     g_second_original();
 }
@@ -555,9 +557,16 @@ bool init_second_drawer(const std::vector<mem::NamedRegion>& sections,
     return true;
 }
 
-void set_suppress_second_drawer(bool on) {
+void set_suppress_second_drawer(bool on, bool everywhere) {
     g_suppress_second.store(on, std::memory_order_relaxed);
-    logger::info("second drawer: {}", on ? "suppressed during cutscenes" : "left alone");
+    g_suppress_everywhere.store(everywhere, std::memory_order_relaxed);
+    if (!on) {
+        logger::info("second drawer: left alone");
+    } else if (everywhere) {
+        logger::info("second drawer: suppressed everywhere (RemoveAllBlackBars)");
+    } else {
+        logger::info("second drawer: suppressed during cutscenes only");
+    }
 }
 
 void set_side_bars(bool on) {

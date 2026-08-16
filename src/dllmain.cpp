@@ -542,7 +542,7 @@ DWORD WINAPI worker(LPVOID) {
             // Hooked and suppressed only while a cutscene is running, so menus
             // keep the bars that belong to them.
             if (bars::init_second_drawer(mem::executable_sections(module), anchor)) {
-                bars::set_suppress_second_drawer(true);
+                bars::set_suppress_second_drawer(true, config::current().remove_all_black_bars);
             }
 
             // Prepared but not applied: measured to have no effect on the 2D

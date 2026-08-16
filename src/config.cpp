@@ -103,6 +103,15 @@ bool read_from(const std::filesystem::path& file, Settings& settings) {
                 logger::info("config:   line {}: '{}' is not true or false, keeping the default",
                              line_number, value);
             }
+        } else if (key == "removeallblackbars") {
+            bool parsed = false;
+            if (parse_bool(value, parsed)) {
+                settings.remove_all_black_bars = parsed;
+                logger::info("config:   RemoveAllBlackBars = {}", parsed ? "true" : "false");
+            } else {
+                logger::info("config:   line {}: '{}' is not true or false, keeping the default",
+                             line_number, value);
+            }
         } else {
             logger::info("config:   line {}: unknown setting '{}', ignored", line_number, key);
         }
