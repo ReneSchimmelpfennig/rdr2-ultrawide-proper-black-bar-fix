@@ -306,7 +306,10 @@ std::atomic<float> g_dst_last_in[kMaxDestinations]{};
 // constant (measured at 0.0000 through whole ramps) and far less than the
 // several degrees a mistaken camera would be off by.
 constexpr float kRenderedMiss = 1.0f;
-constexpr unsigned kMaxMissLines = 200;
+// Raised for long sessions: since this counts per camera it no longer fires on
+// every shot change, so each line is a real event and running out of budget
+// halfway through an evening would hide exactly the late ones worth having.
+constexpr unsigned kMaxMissLines = 600;
 std::atomic<unsigned> g_miss_lines{0};
 std::atomic<float> g_last_our_output{0.0f};
 
