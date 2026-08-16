@@ -6,10 +6,14 @@
 
 // Settings read from RDR2UltrawideCutsceneFix.ini.
 //
-// Everything in here concerns displays wider than 21:9 only. On 21:9 and
-// narrower nothing below is consulted at all -- see framing::kUltrawideThreshold
-// -- so a missing or malformed file cannot change the behaviour anyone is
-// currently getting.
+// The scope differs per setting, and the file says so for each one.
+// ExpandCutscenesSideways is consulted only above framing::kUltrawideThreshold;
+// RemoveAllBlackBars applies to every resolution. That was worth stating in
+// three places, because until the second setting arrived "this file is for wide
+// displays only" was true of the whole file and read like a guarantee.
+//
+// A missing or malformed file is still harmless: the defaults are the
+// conservative behaviour in both cases.
 namespace config {
 
 struct Settings {

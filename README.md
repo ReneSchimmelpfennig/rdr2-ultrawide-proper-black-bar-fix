@@ -122,8 +122,24 @@ is more scene than anyone composed — the same trade the bar-removal-only mods
 make, offered here as a choice rather than as the only option.
 
 The file is `RDR2UltrawideCutsceneFix.ini`, next to the plugin, and it is
-optional: without it the default applies. On 21:9 and narrower nothing in it is
-consulted at all, so it cannot change what those displays already get.
+optional: without it the defaults apply. This particular setting is consulted
+only above 21:9, so it cannot change what narrower displays already get.
+
+## Bars outside cutscenes
+
+RDR2 has two separate systems for black bars, and the second one puts them on the
+pause menu, shops and photo mode as well as on the scene that follows the intro
+video. The plugin suppresses it while a cutscene is running, which is what
+removes the bars from that scene, and leaves the menus as the game intends them.
+
+```ini
+RemoveAllBlackBars = false
+```
+
+Set it to `true` to remove those too. It is not risky — the long-standing
+`RDR2NoBlackBars` mod disables that function outright — but the screen effects
+behind those bars are still drawn for a 16:9 window, so where a bar used to be an
+unprocessed strip can show. This setting applies at every resolution.
 
 ## Requirements
 
